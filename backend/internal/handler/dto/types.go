@@ -65,6 +65,46 @@ type APIKey struct {
 	Group *Group `json:"group,omitempty"`
 }
 
+type APIKeyExchangeCode struct {
+	ID            int64      `json:"id"`
+	Code          string     `json:"code"`
+	OwnerUserID   int64      `json:"owner_user_id"`
+	CreatedBy     *int64     `json:"created_by"`
+	GroupID       *int64     `json:"group_id"`
+	Quota         float64    `json:"quota"`
+	ExpiresInDays int        `json:"expires_in_days"`
+	Status        string     `json:"status"`
+	APIKeyID      *int64     `json:"api_key_id"`
+	ActivatedAt   *time.Time `json:"activated_at"`
+	ActivatedIP   *string    `json:"activated_ip,omitempty"`
+	BatchNo       string     `json:"batch_no"`
+	Notes         string     `json:"notes"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+
+	Group  *Group  `json:"group,omitempty"`
+	APIKey *APIKey `json:"api_key,omitempty"`
+}
+
+type APIKeyExchangeResolveResponse struct {
+	Code            string     `json:"code"`
+	Status          string     `json:"status"`
+	Action          string     `json:"action"`
+	ActivatedAt     *time.Time `json:"activated_at"`
+	APIKeyID        int64      `json:"api_key_id"`
+	APIKey          string     `json:"api_key"`
+	APIKeyName      string     `json:"api_key_name"`
+	APIKeyStatus    string     `json:"api_key_status"`
+	Quota           float64    `json:"quota"`
+	QuotaUsed       float64    `json:"quota_used"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	TodayActualCost float64    `json:"today_actual_cost"`
+	TotalActualCost float64    `json:"total_actual_cost"`
+	TotalRequests   int64      `json:"total_requests"`
+
+	Group *Group `json:"group,omitempty"`
+}
+
 type Group struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`

@@ -11,7 +11,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -19,15 +21,17 @@ import (
 
 // RedeemHandler handles admin redeem code management
 type RedeemHandler struct {
-	adminService  service.AdminService
-	redeemService *service.RedeemService
+	adminService          service.AdminService
+	redeemService         *service.RedeemService
+	apiKeyExchangeService *service.APIKeyExchangeService
 }
 
 // NewRedeemHandler creates a new admin redeem handler
-func NewRedeemHandler(adminService service.AdminService, redeemService *service.RedeemService) *RedeemHandler {
+func NewRedeemHandler(adminService service.AdminService, redeemService *service.RedeemService, apiKeyExchangeService *service.APIKeyExchangeService) *RedeemHandler {
 	return &RedeemHandler{
-		adminService:  adminService,
-		redeemService: redeemService,
+		adminService:          adminService,
+		redeemService:         redeemService,
+		apiKeyExchangeService: apiKeyExchangeService,
 	}
 }
 
@@ -50,6 +54,15 @@ type CreateAndRedeemCodeRequest struct {
 	GroupID      *int64  `json:"group_id"`                                    // subscription 类型必填
 	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // subscription 类型必填，>0
 	Notes        string  `json:"notes"`
+}
+
+type GenerateAPIKeyExchangeCodesRequest struct {
+	Count         int     `json:"count" binding:"required,min=1,max=500"`
+	GroupID       *int64  `json:"group_id"`
+	Quota         float64 `json:"quota" binding:"min=0"`
+	ExpiresInDays int     `json:"expires_in_days" binding:"min=0,max=36500"`
+	BatchNo       string  `json:"batch_no"`
+	Notes         string  `json:"notes"`
 }
 
 // List handles listing all redeem codes with pagination
@@ -216,6 +229,128 @@ func (h *RedeemHandler) resolveCreateAndRedeemExisting(ctx context.Context, exis
 	}
 
 	return nil, infraerrors.Conflict("REDEEM_CODE_CONFLICT", "redeem code already used by another user")
+}
+
+// ListAPIKeyExchangeCodes handles listing independent api key exchange codes.
+// GET /api/v1/admin/key-exchange-codes
+func (h *RedeemHandler) ListAPIKeyExchangeCodes(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	filters := service.APIKeyExchangeCodeListFilters{
+		Status: strings.TrimSpace(c.Query("status")),
+		Search: strings.TrimSpace(c.Query("search")),
+	}
+	if len(filters.Search) > 100 {
+		filters.Search = filters.Search[:100]
+	}
+
+	result, paginationResult, err := h.apiKeyExchangeService.ListCodes(
+		c.Request.Context(),
+		pagination.PaginationParams{Page: page, PageSize: pageSize},
+		filters,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	out := make([]dto.APIKeyExchangeCode, 0, len(result))
+	for i := range result {
+		out = append(out, *dto.APIKeyExchangeCodeFromService(&result[i]))
+	}
+	response.Paginated(c, out, paginationResult.Total, page, pageSize)
+}
+
+// GetAPIKeyExchangeCodeByID handles getting a single api key exchange code.
+// GET /api/v1/admin/key-exchange-codes/:id
+func (h *RedeemHandler) GetAPIKeyExchangeCodeByID(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid api key exchange code ID")
+		return
+	}
+
+	code, err := h.apiKeyExchangeService.GetCodeByID(c.Request.Context(), codeID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.APIKeyExchangeCodeFromService(code))
+}
+
+// GenerateAPIKeyExchangeCodes handles batch generation.
+// POST /api/v1/admin/key-exchange-codes/generate
+func (h *RedeemHandler) GenerateAPIKeyExchangeCodes(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "Admin not authenticated")
+		return
+	}
+
+	var req GenerateAPIKeyExchangeCodesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	executeAdminIdempotentJSON(c, "admin.key_exchange_codes.generate", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		codes, err := h.apiKeyExchangeService.GenerateCodes(ctx, service.GenerateAPIKeyExchangeCodesInput{
+			OwnerUserID:   subject.UserID,
+			CreatedBy:     subject.UserID,
+			Count:         req.Count,
+			GroupID:       req.GroupID,
+			Quota:         req.Quota,
+			ExpiresInDays: req.ExpiresInDays,
+			BatchNo:       req.BatchNo,
+			Notes:         req.Notes,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		out := make([]dto.APIKeyExchangeCode, 0, len(codes))
+		for i := range codes {
+			out = append(out, *dto.APIKeyExchangeCodeFromService(&codes[i]))
+		}
+		return out, nil
+	})
+}
+
+// DeleteAPIKeyExchangeCode handles deleting an unused code.
+// DELETE /api/v1/admin/key-exchange-codes/:id
+func (h *RedeemHandler) DeleteAPIKeyExchangeCode(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	codeID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid api key exchange code ID")
+		return
+	}
+
+	if err := h.apiKeyExchangeService.DeleteCode(c.Request.Context(), codeID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "API key exchange code deleted successfully"})
 }
 
 // Delete handles deleting a redeem code

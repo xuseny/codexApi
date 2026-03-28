@@ -48,6 +48,7 @@ func RegisterAdminRoutes(
 
 		// 卡密管理
 		registerRedeemCodeRoutes(admin, h)
+		registerAPIKeyExchangeCodeRoutes(admin, h)
 
 		// 优惠码管理
 		registerPromoCodeRoutes(admin, h)
@@ -94,6 +95,16 @@ func registerAdminAPIKeyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	apiKeys := admin.Group("/api-keys")
 	{
 		apiKeys.PUT("/:id", h.Admin.APIKey.UpdateGroup)
+	}
+}
+
+func registerAPIKeyExchangeCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	codes := admin.Group("/key-exchange-codes")
+	{
+		codes.GET("", h.Admin.Redeem.ListAPIKeyExchangeCodes)
+		codes.GET("/:id", h.Admin.Redeem.GetAPIKeyExchangeCodeByID)
+		codes.POST("/generate", h.Admin.Redeem.GenerateAPIKeyExchangeCodes)
+		codes.DELETE("/:id", h.Admin.Redeem.DeleteAPIKeyExchangeCode)
 	}
 }
 

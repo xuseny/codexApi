@@ -111,6 +111,16 @@ const routes: RouteRecordRaw[] = [
       title: 'Key Usage',
     }
   },
+  {
+    path: '/key-exchange',
+    name: 'KeyExchange',
+    component: () => import('@/views/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Key Exchange',
+      titleKey: 'keyExchange.title'
+    }
+  },
 
   // ==================== User Routes ====================
   {
@@ -339,6 +349,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/key-exchange',
+    name: 'AdminKeyExchange',
+    component: () => import('@/views/admin/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'API Key Exchange',
+      titleKey: 'admin.keyExchange.title',
+      descriptionKey: 'admin.keyExchange.description'
+    }
+  },
+  {
     path: '/admin/promo-codes',
     name: 'AdminPromoCodes',
     component: () => import('@/views/admin/PromoCodesView.vue'),
@@ -411,7 +433,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/key-exchange', '/setup']
 
 router.beforeEach((to, _from, next) => {
   // 开始导航加载状态

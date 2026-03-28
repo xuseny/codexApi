@@ -113,6 +113,54 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 	return out
 }
 
+func APIKeyExchangeCodeFromService(code *service.APIKeyExchangeCode) *APIKeyExchangeCode {
+	if code == nil {
+		return nil
+	}
+	return &APIKeyExchangeCode{
+		ID:            code.ID,
+		Code:          code.Code,
+		OwnerUserID:   code.OwnerUserID,
+		CreatedBy:     code.CreatedBy,
+		GroupID:       code.GroupID,
+		Quota:         code.Quota,
+		ExpiresInDays: code.ExpiresInDays,
+		Status:        code.Status,
+		APIKeyID:      code.APIKeyID,
+		ActivatedAt:   code.ActivatedAt,
+		ActivatedIP:   code.ActivatedIP,
+		BatchNo:       code.BatchNo,
+		Notes:         code.Notes,
+		CreatedAt:     code.CreatedAt,
+		UpdatedAt:     code.UpdatedAt,
+		Group:         GroupFromServiceShallow(code.Group),
+		APIKey:        APIKeyFromService(code.APIKey),
+	}
+}
+
+func APIKeyExchangeResolveResponseFromService(result *service.APIKeyExchangeResolveResult) *APIKeyExchangeResolveResponse {
+	if result == nil {
+		return nil
+	}
+	return &APIKeyExchangeResolveResponse{
+		Code:            result.Code,
+		Status:          result.Status,
+		Action:          result.Action,
+		ActivatedAt:     result.ActivatedAt,
+		APIKeyID:        result.APIKeyID,
+		APIKey:          result.APIKey,
+		APIKeyName:      result.APIKeyName,
+		APIKeyStatus:    result.APIKeyStatus,
+		Quota:           result.Quota,
+		QuotaUsed:       result.QuotaUsed,
+		ExpiresAt:       result.ExpiresAt,
+		TodayActualCost: result.TodayActualCost,
+		TotalActualCost: result.TotalActualCost,
+		TotalRequests:   result.TotalRequests,
+		Group:           GroupFromServiceShallow(result.Group),
+	}
+}
+
 func GroupFromServiceShallow(g *service.Group) *Group {
 	if g == nil {
 		return nil

@@ -8,22 +8,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SettingHandler 公开设置处理器（无需认证）
+// SettingHandler handles public settings and public utility endpoints.
 type SettingHandler struct {
-	settingService *service.SettingService
-	version        string
+	settingService        *service.SettingService
+	apiKeyExchangeService *service.APIKeyExchangeService
+	version               string
 }
 
-// NewSettingHandler 创建公开设置处理器
-func NewSettingHandler(settingService *service.SettingService, version string) *SettingHandler {
+func NewSettingHandler(settingService *service.SettingService, apiKeyExchangeService *service.APIKeyExchangeService, version string) *SettingHandler {
 	return &SettingHandler{
-		settingService: settingService,
-		version:        version,
+		settingService:        settingService,
+		apiKeyExchangeService: apiKeyExchangeService,
+		version:               version,
 	}
 }
 
-// GetPublicSettings 获取公开设置
-// GET /api/v1/settings/public
+type ResolveAPIKeyExchangeRequest struct {
+	Code     string `json:"code" binding:"required"`
+	Timezone string `json:"timezone"`
+}
+
+// GetPublicSettings handles GET /api/v1/settings/public.
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
 	if err != nil {
@@ -58,4 +63,26 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		BackendModeEnabled:               settings.BackendModeEnabled,
 		Version:                          h.version,
 	})
+}
+
+// ResolveAPIKeyExchange handles POST /api/v1/key-exchange/resolve.
+func (h *SettingHandler) ResolveAPIKeyExchange(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	var req ResolveAPIKeyExchangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.apiKeyExchangeService.Resolve(c.Request.Context(), req.Code, c.ClientIP(), req.Timezone)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.APIKeyExchangeResolveResponseFromService(result))
 }

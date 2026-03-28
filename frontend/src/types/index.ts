@@ -1108,6 +1108,60 @@ export interface RedeemCodeRequest {
   code: string
 }
 
+export type APIKeyExchangeCodeStatus = 'unused' | 'activated' | 'disabled'
+
+export interface APIKeyExchangeCode {
+  id: number
+  code: string
+  owner_user_id: number
+  created_by: number | null
+  group_id: number | null
+  quota: number
+  expires_in_days: number
+  status: APIKeyExchangeCodeStatus
+  api_key_id: number | null
+  activated_at: string | null
+  activated_ip?: string | null
+  batch_no: string
+  notes: string
+  created_at: string
+  updated_at: string
+  group?: Group
+  api_key?: ApiKey
+}
+
+export interface GenerateAPIKeyExchangeCodesRequest {
+  count: number
+  group_id?: number | null
+  quota?: number
+  expires_in_days?: number
+  batch_no?: string
+  notes?: string
+}
+
+export interface APIKeyExchangeResolveRequest {
+  code: string
+  timezone?: string
+}
+
+export interface APIKeyExchangeResolveResponse {
+  code: string
+  status: APIKeyExchangeCodeStatus
+  action: 'activated' | 'queried'
+  activated_at: string | null
+  api_key_id: number
+  api_key: string
+  api_key_name: string
+  api_key_status: 'active' | 'disabled' | 'expired' | 'quota_exhausted'
+  quota: number
+  quota_used: number
+  expires_at: string | null
+  today_actual_cost: number
+  total_actual_cost: number
+  total_requests: number
+  group?: Group
+}
+
 // ==================== Dashboard & Statistics ====================
 
 export interface DashboardStats {
