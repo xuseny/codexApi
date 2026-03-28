@@ -122,6 +122,11 @@
                   {{ t('nav.apiKeys') }}
                 </router-link>
 
+                <router-link to="/key-exchange" @click="closeDropdown" class="dropdown-item">
+                  <Icon name="gift" size="sm" />
+                  {{ t('nav.keyExchange') }}
+                </router-link>
+
                 <a
                   v-if="authStore.isAdmin"
                   href="https://github.com/Wei-Shaw/sub2api"

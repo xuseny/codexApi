@@ -367,6 +367,7 @@ export default {
     apiKeys: 'API Keys',
     usage: 'Usage',
     redeem: 'Redeem',
+    keyExchange: 'Key Exchange',
     profile: 'Profile',
     users: 'Users',
     groups: 'Groups',

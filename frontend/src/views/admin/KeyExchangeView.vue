@@ -2,29 +2,32 @@
   <AppLayout>
     <TablePageLayout>
       <template #filters>
-        <div class="flex flex-col gap-3">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <input
-              v-model="search"
-              type="text"
-              :placeholder="t('admin.keyExchange.searchPlaceholder')"
-              class="input w-full sm:max-w-xs"
-              @input="handleSearch"
-            />
-            <Select
-              v-model="filters.status"
-              :options="statusOptions"
-              class="w-full sm:w-44"
-              @change="loadCodes"
-            />
-          </div>
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <button class="btn btn-secondary" :disabled="loading" @click="loadCodes">
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-            <button class="btn btn-primary" @click="showGenerateDialog = true">
-              {{ t('admin.keyExchange.generateCodes') }}
-            </button>
+        <div class="rounded-2xl border border-gray-200/80 bg-white/85 p-4 shadow-sm backdrop-blur dark:border-dark-700/80 dark:bg-dark-900/85">
+          <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <input
+                v-model="search"
+                type="text"
+                :placeholder="t('admin.keyExchange.searchPlaceholder')"
+                class="input w-full sm:min-w-[320px] sm:max-w-md"
+                @input="handleSearch"
+              />
+              <Select
+                v-model="filters.status"
+                :options="statusOptions"
+                class="w-full sm:w-44"
+                @change="loadCodes"
+              />
+            </div>
+
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <button class="btn btn-secondary" :disabled="loading" @click="loadCodes">
+                <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+              </button>
+              <button class="btn btn-primary" @click="showGenerateDialog = true">
+                {{ t('admin.keyExchange.generateCodes') }}
+              </button>
+            </div>
           </div>
         </div>
       </template>
