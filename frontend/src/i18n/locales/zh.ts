@@ -202,8 +202,21 @@ export default {
     todayCost: '今日消费',
     totalCost: '累计消费',
     totalRequests: '累计请求',
+    usageTitle: '使用情况',
     group: '分组',
     activatedAt: '激活时间',
+    statusLabel: '当前状态',
+    configTitle: '客户端配置',
+    configDescription: '不直接展示密钥，优先为你生成可下载、可写入的配置文件。',
+    configUnavailable: '当前分组暂未提供可直接生成的本地配置模板。',
+    downloadConfig: '下载配置',
+    saveToLocal: '保存到本地',
+    previewConfig: '预览配置内容',
+    saveSupported: '当前浏览器支持选择本地位置后直接写入配置文件',
+    saveNotSupported: '当前浏览器不支持直接写入本地文件，请使用下载配置',
+    savedSuccess: '配置文件保存成功',
+    savedFailed: '保存配置文件失败',
+    advancedToggle: '高级信息（仅在需要手动配置时展开）',
     status: {
       active: '正常',
       disabled: '已禁用',
@@ -3282,7 +3295,7 @@ export default {
       failedToDelete: '删除兑换码失败'
     },
 
-    keyExchange: {
+  keyExchange: {
       title: 'API Key 兑换码管理',
       description: '批量生成用于创建 API Key 的独立兑换码',
       generateCodes: '生成兑换码',
