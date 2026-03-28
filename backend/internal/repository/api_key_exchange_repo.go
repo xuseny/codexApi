@@ -254,7 +254,7 @@ func (r *apiKeyExchangeRepository) Resolve(ctx context.Context, code string, api
 			service.APIKeyExchangeStatusActivated,
 			apiKeyID,
 			now,
-			nullString(activatedIP),
+			nullStringValue(activatedIP),
 			record.ID,
 		); err != nil {
 			return nil, "", err
@@ -647,7 +647,7 @@ func nullableStringPtr(value string) *string {
 	return &value
 }
 
-func nullString(value string) sql.NullString {
+func nullStringValue(value string) sql.NullString {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return sql.NullString{}
