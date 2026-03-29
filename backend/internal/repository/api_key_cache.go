@@ -16,6 +16,7 @@ const (
 	apiKeyRateLimitKeyPrefix   = "apikey:ratelimit:"
 	apiKeyRateLimitDuration    = 24 * time.Hour
 	apiKeyAuthCachePrefix      = "apikey:auth:"
+	apiKeyDeviceLockKeyPrefix  = "apikey:device_lock:"
 	authCacheInvalidateChannel = "auth:cache:invalidate"
 )
 
@@ -27,6 +28,35 @@ func apiKeyRateLimitKey(userID int64) string {
 func apiKeyAuthCacheKey(key string) string {
 	return fmt.Sprintf("%s%s", apiKeyAuthCachePrefix, key)
 }
+
+func apiKeyDeviceLockKey(keyID int64) string {
+	return fmt.Sprintf("%s%d", apiKeyDeviceLockKeyPrefix, keyID)
+}
+
+var acquireAPIKeyDeviceLockScript = redis.NewScript(`
+	local key = KEYS[1]
+	local fingerprint = ARGV[1]
+	local payload = ARGV[2]
+	local ttl = tonumber(ARGV[3])
+
+	local existing = redis.call('GET', key)
+	if not existing or existing == false then
+		redis.call('PSETEX', key, ttl, payload)
+		return cjson.encode({ acquired = true })
+	end
+
+	local ok, decoded = pcall(cjson.decode, existing)
+	if ok and decoded and decoded.fingerprint == fingerprint then
+		redis.call('PSETEX', key, ttl, payload)
+		return cjson.encode({ acquired = true, current = decoded })
+	end
+
+	if ok and decoded then
+		return cjson.encode({ acquired = false, current = decoded })
+	end
+
+	return cjson.encode({ acquired = false })
+`)
 
 type apiKeyCache struct {
 	rdb *redis.Client
@@ -134,4 +164,73 @@ func (c *apiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handle
 	}()
 
 	return nil
+}
+
+type apiKeyDeviceLockAcquireResult struct {
+	Acquired bool                      `json:"acquired"`
+	Current  *service.APIKeyDeviceLock `json:"current,omitempty"`
+}
+
+func (c *apiKeyCache) AcquireDeviceLock(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+	if lock == nil || keyID <= 0 {
+		return nil, true, nil
+	}
+
+	payload, err := json.Marshal(lock)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
+
+	rawResult, err := acquireAPIKeyDeviceLockScript.Run(
+		ctx,
+		c.rdb,
+		[]string{apiKeyDeviceLockKey(keyID)},
+		lock.Fingerprint,
+		string(payload),
+		ttl.Milliseconds(),
+	).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	raw, ok := rawResult.(string)
+	if !ok {
+		return nil, false, fmt.Errorf("unexpected api key device lock result type %T", rawResult)
+	}
+
+	var result apiKeyDeviceLockAcquireResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, false, err
+	}
+	return result.Current, result.Acquired, nil
+}
+
+func (c *apiKeyCache) GetDeviceLock(ctx context.Context, keyID int64) (*service.APIKeyDeviceLock, error) {
+	if keyID <= 0 {
+		return nil, nil
+	}
+
+	val, err := c.rdb.Get(ctx, apiKeyDeviceLockKey(keyID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var lock service.APIKeyDeviceLock
+	if err := json.Unmarshal(val, &lock); err != nil {
+		return nil, err
+	}
+	return &lock, nil
+}
+
+func (c *apiKeyCache) DeleteDeviceLock(ctx context.Context, keyID int64) error {
+	if keyID <= 0 {
+		return nil
+	}
+	return c.rdb.Del(ctx, apiKeyDeviceLockKey(keyID)).Err()
 }

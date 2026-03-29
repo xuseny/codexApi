@@ -101,8 +101,16 @@ type APIKeyExchangeResolveResponse struct {
 	TodayActualCost float64    `json:"today_actual_cost"`
 	TotalActualCost float64    `json:"total_actual_cost"`
 	TotalRequests   int64      `json:"total_requests"`
+	OnlineDevice    *APIKeyOnlineDeviceInfo `json:"online_device,omitempty"`
 
 	Group *Group `json:"group,omitempty"`
+}
+
+type APIKeyOnlineDeviceInfo struct {
+	DeviceLabel string     `json:"device_label"`
+	ClientIP    string     `json:"client_ip,omitempty"`
+	UserAgent   string     `json:"user_agent,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
 type Group struct {

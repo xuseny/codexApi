@@ -32,6 +32,10 @@ type fakeGoogleSubscriptionRepo struct {
 	resetMonthly   func(ctx context.Context, id int64, start time.Time) error
 }
 
+type googleDeviceLockCacheStub struct {
+	acquire func(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error)
+}
+
 func (f fakeAPIKeyRepo) Create(ctx context.Context, key *service.APIKey) error {
 	return errors.New("not implemented")
 }
@@ -185,6 +189,61 @@ func (f fakeGoogleSubscriptionRepo) IncrementUsage(ctx context.Context, id int64
 }
 func (f fakeGoogleSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
+}
+
+func (s *googleDeviceLockCacheStub) GetCreateAttemptCount(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (s *googleDeviceLockCacheStub) IncrementCreateAttemptCount(context.Context, int64) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) DeleteCreateAttemptCount(context.Context, int64) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) IncrementDailyUsage(context.Context, string) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) SetDailyUsageExpiry(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) GetAuthCache(context.Context, string) (*service.APIKeyAuthCacheEntry, error) {
+	return nil, nil
+}
+
+func (s *googleDeviceLockCacheStub) SetAuthCache(context.Context, string, *service.APIKeyAuthCacheEntry, time.Duration) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) DeleteAuthCache(context.Context, string) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) PublishAuthCacheInvalidation(context.Context, string) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) SubscribeAuthCacheInvalidation(context.Context, func(string)) error {
+	return nil
+}
+
+func (s *googleDeviceLockCacheStub) AcquireDeviceLock(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+	if s.acquire != nil {
+		return s.acquire(ctx, keyID, lock, ttl)
+	}
+	return nil, true, nil
+}
+
+func (s *googleDeviceLockCacheStub) GetDeviceLock(context.Context, int64) (*service.APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (s *googleDeviceLockCacheStub) DeleteDeviceLock(context.Context, int64) error {
+	return nil
 }
 
 type googleErrorResponse struct {
@@ -686,4 +745,64 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 	require.Equal(t, http.StatusTooManyRequests, resp.Error.Code)
 	require.Equal(t, "RESOURCE_EXHAUSTED", resp.Error.Status)
 	require.Contains(t, resp.Error.Message, "daily usage limit exceeded")
+}
+
+func TestApiKeyAuthWithSubscriptionGoogle_RejectsWhenSingleDeviceLockOccupied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	user := &service.User{
+		ID:          14,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     10,
+		Concurrency: 3,
+	}
+	apiKey := &service.APIKey{
+		ID:     204,
+		UserID: user.ID,
+		Key:    "google-device-lock",
+		Status: service.StatusActive,
+		User:   user,
+	}
+
+	apiKeyService := service.NewAPIKeyService(
+		fakeAPIKeyRepo{
+			getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+				if key != apiKey.Key {
+					return nil, service.ErrAPIKeyNotFound
+				}
+				clone := *apiKey
+				return &clone, nil
+			},
+		},
+		nil,
+		nil,
+		nil,
+		nil,
+		&googleDeviceLockCacheStub{
+			acquire: func(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+				return &service.APIKeyDeviceLock{Fingerprint: "other", DeviceLabel: "IP 8.8.8.8 / other-client"}, false, nil
+			},
+		},
+		&config.Config{RunMode: config.RunModeSimple},
+	)
+
+	r := gin.New()
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, cfg))
+	r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	req.Header.Set("x-goog-api-key", apiKey.Key)
+	req.Header.Set("User-Agent", "gemini-cli/1.0")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var resp googleErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, http.StatusConflict, resp.Error.Code)
+	require.Equal(t, "ABORTED", resp.Error.Status)
+	require.Contains(t, resp.Error.Message, "API key 只能同时在线一台设备")
 }

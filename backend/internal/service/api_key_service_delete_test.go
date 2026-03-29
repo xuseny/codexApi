@@ -207,6 +207,18 @@ func (s *apiKeyCacheStub) SubscribeAuthCacheInvalidation(ctx context.Context, ha
 	return nil
 }
 
+func (s *apiKeyCacheStub) AcquireDeviceLock(ctx context.Context, keyID int64, lock *APIKeyDeviceLock, ttl time.Duration) (*APIKeyDeviceLock, bool, error) {
+	return nil, true, nil
+}
+
+func (s *apiKeyCacheStub) GetDeviceLock(ctx context.Context, keyID int64) (*APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (s *apiKeyCacheStub) DeleteDeviceLock(ctx context.Context, keyID int64) error {
+	return nil
+}
+
 // TestApiKeyService_Delete_OwnerMismatch 测试非所有者尝试删除时返回权限错误。
 // 预期行为：
 //   - GetKeyAndOwnerID 返回所有者 ID 为 1

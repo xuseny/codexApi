@@ -85,6 +85,50 @@
           </div>
         </div>
 
+        <div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                {{ t('keyExchange.selfHelpTitle') }}
+              </h2>
+              <p class="mt-1 text-sm text-amber-700/90 dark:text-amber-200/80">
+                {{ t('keyExchange.selfHelpDescription') }}
+              </p>
+            </div>
+            <button
+              type="button"
+              :disabled="kickingOffline"
+              class="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+              @click="showKickOfflineDialog = true"
+            >
+              <Icon v-if="!kickingOffline" name="ban" size="sm" class="mr-2" />
+              <svg v-else class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25" />
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+              </svg>
+              {{ kickingOffline ? t('keyExchange.kickingOffline') : t('keyExchange.kickOffline') }}
+            </button>
+          </div>
+          <div class="mt-4 rounded-2xl border border-amber-200/80 bg-white/80 p-4 dark:border-amber-900/60 dark:bg-dark-900/80">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+              {{ t('keyExchange.onlineDeviceTitle') }}
+            </h3>
+            <div v-if="result.online_device?.device_label" class="mt-3 space-y-2 text-sm">
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.onlineDeviceCurrent') }}</span>
+                <span class="text-right font-medium text-gray-900 dark:text-white">{{ result.online_device.device_label }}</span>
+              </div>
+              <div v-if="result.online_device.updated_at" class="flex items-center justify-between gap-4">
+                <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.onlineDeviceLastSeen') }}</span>
+                <span class="text-right font-medium text-gray-900 dark:text-white">{{ formatDateTime(result.online_device.updated_at) }}</span>
+              </div>
+            </div>
+            <p v-else class="mt-3 text-sm text-gray-500 dark:text-dark-400">
+              {{ t('keyExchange.onlineDeviceEmpty') }}
+            </p>
+          </div>
+        </div>
+
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">
@@ -275,12 +319,22 @@
         </details>
       </section>
     </main>
+
+    <ConfirmDialog
+      :show="showKickOfflineDialog"
+      :title="t('keyExchange.kickOfflineConfirmTitle')"
+      :message="t('keyExchange.kickOfflineConfirmMessage')"
+      :confirm-text="t('keyExchange.kickOffline')"
+      @confirm="handleKickOffline"
+      @cancel="showKickOfflineDialog = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyExchangeAPI } from '@/api'
@@ -296,6 +350,8 @@ const { copyToClipboard } = useClipboard()
 
 const code = ref('')
 const resolving = ref(false)
+const kickingOffline = ref(false)
+const showKickOfflineDialog = ref(false)
 const result = ref<APIKeyExchangeResolveResponse | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const selectedPresetId = ref<string>('')
@@ -409,6 +465,28 @@ async function handleResolve() {
     appStore.showError(error?.response?.data?.detail || error?.message || t('keyExchange.resolveFailed'))
   } finally {
     resolving.value = false
+  }
+}
+
+async function handleKickOffline() {
+  const trimmed = (result.value?.code || code.value).trim().toUpperCase()
+  if (!trimmed) {
+    appStore.showInfo(t('keyExchange.codeRequired'))
+    return
+  }
+
+  showKickOfflineDialog.value = false
+  kickingOffline.value = true
+  try {
+    await keyExchangeAPI.kickOffline(trimmed)
+    if (result.value) {
+      result.value.online_device = null
+    }
+    appStore.showSuccess(t('keyExchange.kickOfflineSuccess'))
+  } catch (error: any) {
+    appStore.showError(error?.message || t('keyExchange.kickOfflineFailed'))
+  } finally {
+    kickingOffline.value = false
   }
 }
 

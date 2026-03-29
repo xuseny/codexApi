@@ -492,6 +492,55 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
+func TestAPIKeyAuthRejectsWhenSingleDeviceLockOccupied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	user := &service.User{
+		ID:          10,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     10,
+		Concurrency: 3,
+	}
+	apiKey := &service.APIKey{
+		ID:     103,
+		UserID: user.ID,
+		Key:    "device-lock-key",
+		Status: service.StatusActive,
+		User:   user,
+	}
+
+	apiKeyRepo := &stubApiKeyRepo{
+		getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+			if key != apiKey.Key {
+				return nil, service.ErrAPIKeyNotFound
+			}
+			clone := *apiKey
+			return &clone, nil
+		},
+	}
+	cache := &deviceLockCacheStub{
+		acquire: func(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+			return &service.APIKeyDeviceLock{Fingerprint: "other", DeviceLabel: "IP 8.8.8.8 / other-client"}, false, nil
+		},
+	}
+
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, cache, cfg)
+	router := newAuthTestRouter(apiKeyService, nil, cfg)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	req.Header.Set("x-api-key", apiKey.Key)
+	req.Header.Set("User-Agent", "codex_cli_rs/0.104.0")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Contains(t, w.Body.String(), "API_KEY_SINGLE_DEVICE_LIMIT")
+	require.Contains(t, w.Body.String(), "API key 只能同时在线一台设备")
+}
+
 func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, cfg)))
@@ -504,6 +553,65 @@ func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService
 type stubApiKeyRepo struct {
 	getByKey       func(ctx context.Context, key string) (*service.APIKey, error)
 	updateLastUsed func(ctx context.Context, id int64, usedAt time.Time) error
+}
+
+type deviceLockCacheStub struct {
+	acquire func(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error)
+}
+
+func (s *deviceLockCacheStub) GetCreateAttemptCount(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (s *deviceLockCacheStub) IncrementCreateAttemptCount(context.Context, int64) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) DeleteCreateAttemptCount(context.Context, int64) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) IncrementDailyUsage(context.Context, string) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) SetDailyUsageExpiry(context.Context, string, time.Duration) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) GetAuthCache(context.Context, string) (*service.APIKeyAuthCacheEntry, error) {
+	return nil, nil
+}
+
+func (s *deviceLockCacheStub) SetAuthCache(context.Context, string, *service.APIKeyAuthCacheEntry, time.Duration) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) DeleteAuthCache(context.Context, string) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) PublishAuthCacheInvalidation(context.Context, string) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) SubscribeAuthCacheInvalidation(context.Context, func(string)) error {
+	return nil
+}
+
+func (s *deviceLockCacheStub) AcquireDeviceLock(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+	if s.acquire != nil {
+		return s.acquire(ctx, keyID, lock, ttl)
+	}
+	return nil, true, nil
+}
+
+func (s *deviceLockCacheStub) GetDeviceLock(context.Context, int64) (*service.APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (s *deviceLockCacheStub) DeleteDeviceLock(context.Context, int64) error {
+	return nil
 }
 
 func (r *stubApiKeyRepo) Create(ctx context.Context, key *service.APIKey) error {

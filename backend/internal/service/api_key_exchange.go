@@ -32,6 +32,7 @@ var (
 	ErrAPIKeyExchangeTooManyRequested  = infraerrors.BadRequest("API_KEY_EXCHANGE_TOO_MANY_REQUESTED", "too many codes requested")
 	ErrAPIKeyExchangeNegativeQuota     = infraerrors.BadRequest("API_KEY_EXCHANGE_NEGATIVE_QUOTA", "quota must be greater than or equal to 0")
 	ErrAPIKeyExchangeNegativeExpiry    = infraerrors.BadRequest("API_KEY_EXCHANGE_NEGATIVE_EXPIRY", "expires_in_days must be greater than or equal to 0")
+	ErrAPIKeyExchangeCodeNotActivated  = infraerrors.Conflict("API_KEY_EXCHANGE_CODE_NOT_ACTIVATED", "exchange code has not been activated yet")
 )
 
 type APIKeyExchangeCode struct {
@@ -92,13 +93,22 @@ type APIKeyExchangeResolveResult struct {
 	TodayActualCost float64
 	TotalActualCost float64
 	TotalRequests   int64
+	OnlineDevice    *APIKeyOnlineDeviceInfo
 	Group           *Group
+}
+
+type APIKeyExchangeKickOfflineResult struct {
+	Code       string `json:"code"`
+	APIKeyID   int64  `json:"api_key_id"`
+	APIKeyName string `json:"api_key_name"`
+	Released   bool   `json:"released"`
 }
 
 type APIKeyExchangeRepository interface {
 	CreateBatch(ctx context.Context, codes []APIKeyExchangeCode) error
 	List(ctx context.Context, params pagination.PaginationParams, filters APIKeyExchangeCodeListFilters) ([]APIKeyExchangeCode, *pagination.PaginationResult, error)
 	GetByID(ctx context.Context, id int64) (*APIKeyExchangeCode, error)
+	GetByCode(ctx context.Context, code string) (*APIKeyExchangeCode, error)
 	DeleteUnused(ctx context.Context, id int64) error
 	Resolve(ctx context.Context, code string, apiKeyName string, apiKeyValue string, activatedIP string) (*APIKeyExchangeCode, string, error)
 	GetUsageSummary(ctx context.Context, apiKeyID int64, todayStart, end time.Time) (*APIKeyExchangeUsageSummary, error)
@@ -214,6 +224,42 @@ func (s *APIKeyExchangeService) DeleteCode(ctx context.Context, id int64) error 
 	return s.repo.DeleteUnused(ctx, id)
 }
 
+func (s *APIKeyExchangeService) KickOffline(ctx context.Context, code string) (*APIKeyExchangeKickOfflineResult, error) {
+	if s == nil || s.apiKeyService == nil {
+		return nil, infraerrors.InternalServer("API_KEY_DEVICE_LOCK_NOT_CONFIGURED", "api key device lock service not configured")
+	}
+
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return nil, infraerrors.BadRequest("API_KEY_EXCHANGE_CODE_REQUIRED", "code is required")
+	}
+
+	record, err := s.repo.GetByCode(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	if record.Status == APIKeyExchangeStatusDisabled {
+		return nil, ErrAPIKeyExchangeCodeDisabled
+	}
+	if record.APIKey == nil || record.APIKeyID == nil {
+		if record.Status == APIKeyExchangeStatusUnused {
+			return nil, ErrAPIKeyExchangeCodeNotActivated
+		}
+		return nil, ErrAPIKeyExchangeOrphanedAPIKey
+	}
+
+	if err := s.apiKeyService.ClearDeviceLock(ctx, *record.APIKeyID); err != nil {
+		return nil, fmt.Errorf("clear api key device lock: %w", err)
+	}
+
+	return &APIKeyExchangeKickOfflineResult{
+		Code:       record.Code,
+		APIKeyID:   *record.APIKeyID,
+		APIKeyName: record.APIKey.Name,
+		Released:   true,
+	}, nil
+}
+
 func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activatedIP, userTimezone string) (*APIKeyExchangeResolveResult, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
@@ -255,6 +301,10 @@ func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activa
 	}
 
 	status := normalizeAPIKeyExchangeAPIKeyStatus(record.APIKey)
+	onlineDevice, err := s.apiKeyService.GetOnlineDeviceInfo(ctx, *record.APIKeyID)
+	if err != nil {
+		onlineDevice = nil
+	}
 	return &APIKeyExchangeResolveResult{
 		Code:            record.Code,
 		Status:          record.Status,
@@ -270,6 +320,7 @@ func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activa
 		TodayActualCost: summary.TodayActualCost,
 		TotalActualCost: summary.TotalActualCost,
 		TotalRequests:   summary.TotalRequests,
+		OnlineDevice:    onlineDevice,
 		Group:           record.Group,
 	}, nil
 }

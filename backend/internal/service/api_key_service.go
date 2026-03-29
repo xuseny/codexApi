@@ -138,6 +138,11 @@ type APIKeyCache interface {
 	// Pub/Sub for L1 cache invalidation across instances
 	PublishAuthCacheInvalidation(ctx context.Context, cacheKey string) error
 	SubscribeAuthCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error
+
+	// Single-device lock for API keys
+	AcquireDeviceLock(ctx context.Context, keyID int64, lock *APIKeyDeviceLock, ttl time.Duration) (current *APIKeyDeviceLock, acquired bool, err error)
+	GetDeviceLock(ctx context.Context, keyID int64) (*APIKeyDeviceLock, error)
+	DeleteDeviceLock(ctx context.Context, keyID int64) error
 }
 
 // APIKeyAuthCacheInvalidator 提供认证缓存失效能力
@@ -653,6 +658,9 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
 	}
 	s.InvalidateAuthCacheByKey(ctx, key)
+	if s.cache != nil {
+		_ = s.cache.DeleteDeviceLock(ctx, id)
+	}
 
 	if err := s.apiKeyRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete api key: %w", err)

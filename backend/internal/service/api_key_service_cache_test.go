@@ -170,6 +170,18 @@ func (s *authCacheStub) SubscribeAuthCacheInvalidation(ctx context.Context, hand
 	return nil
 }
 
+func (s *authCacheStub) AcquireDeviceLock(ctx context.Context, keyID int64, lock *APIKeyDeviceLock, ttl time.Duration) (*APIKeyDeviceLock, bool, error) {
+	return nil, true, nil
+}
+
+func (s *authCacheStub) GetDeviceLock(ctx context.Context, keyID int64) (*APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (s *authCacheStub) DeleteDeviceLock(ctx context.Context, keyID int64) error {
+	return nil
+}
+
 func TestAPIKeyService_GetByKey_UsesL2Cache(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{

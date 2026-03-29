@@ -873,6 +873,18 @@ func (stubApiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handl
 	return nil
 }
 
+func (stubApiKeyCache) AcquireDeviceLock(ctx context.Context, keyID int64, lock *service.APIKeyDeviceLock, ttl time.Duration) (*service.APIKeyDeviceLock, bool, error) {
+	return nil, true, nil
+}
+
+func (stubApiKeyCache) GetDeviceLock(ctx context.Context, keyID int64) (*service.APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (stubApiKeyCache) DeleteDeviceLock(ctx context.Context, keyID int64) error {
+	return nil
+}
+
 type stubGroupRepo struct {
 	active []service.Group
 }

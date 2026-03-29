@@ -28,6 +28,10 @@ type ResolveAPIKeyExchangeRequest struct {
 	Timezone string `json:"timezone"`
 }
 
+type KickAPIKeyExchangeOfflineRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
 // GetPublicSettings handles GET /api/v1/settings/public.
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
@@ -85,4 +89,26 @@ func (h *SettingHandler) ResolveAPIKeyExchange(c *gin.Context) {
 	}
 
 	response.Success(c, dto.APIKeyExchangeResolveResponseFromService(result))
+}
+
+// KickAPIKeyExchangeOffline handles POST /api/v1/key-exchange/kick-offline.
+func (h *SettingHandler) KickAPIKeyExchangeOffline(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	var req KickAPIKeyExchangeOfflineRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.apiKeyExchangeService.KickOffline(c.Request.Context(), req.Code)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, result)
 }

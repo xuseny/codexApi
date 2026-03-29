@@ -75,6 +75,18 @@ func (s *quotaStateCacheStub) SubscribeAuthCacheInvalidation(context.Context, fu
 	return nil
 }
 
+func (s *quotaStateCacheStub) AcquireDeviceLock(context.Context, int64, *APIKeyDeviceLock, time.Duration) (*APIKeyDeviceLock, bool, error) {
+	return nil, true, nil
+}
+
+func (s *quotaStateCacheStub) GetDeviceLock(context.Context, int64) (*APIKeyDeviceLock, error) {
+	return nil, nil
+}
+
+func (s *quotaStateCacheStub) DeleteDeviceLock(context.Context, int64) error {
+	return nil
+}
+
 type quotaBaseAPIKeyRepoStub struct {
 	getByIDCalls int
 }

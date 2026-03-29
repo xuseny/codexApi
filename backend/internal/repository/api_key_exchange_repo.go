@@ -196,6 +196,60 @@ func (r *apiKeyExchangeRepository) GetByID(ctx context.Context, id int64) (*serv
 	return &item, nil
 }
 
+func (r *apiKeyExchangeRepository) GetByCode(ctx context.Context, code string) (*service.APIKeyExchangeCode, error) {
+	query := `
+		SELECT
+			c.id,
+			c.code,
+			c.owner_user_id,
+			c.created_by,
+			c.group_id,
+			c.quota,
+			c.expires_in_days,
+			c.status,
+			c.api_key_id,
+			c.activated_at,
+			c.activated_ip,
+			c.batch_no,
+			c.notes,
+			c.created_at,
+			c.updated_at,
+			g.id,
+			g.name,
+			g.platform,
+			g.status,
+			g.subscription_type,
+			g.rate_multiplier,
+			k.id,
+			k.key,
+			k.name,
+			k.status,
+			k.quota,
+			k.quota_used,
+			k.expires_at,
+			k.last_used_at
+		FROM api_key_exchange_codes c
+		LEFT JOIN groups g ON g.id = c.group_id
+		LEFT JOIN api_keys k ON k.id = c.api_key_id AND k.deleted_at IS NULL
+		WHERE c.code = $1
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, code)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, service.ErrAPIKeyExchangeCodeNotFound
+	}
+
+	item, err := scanAPIKeyExchangeCode(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *apiKeyExchangeRepository) DeleteUnused(ctx context.Context, id int64) error {
 	var status string
 	if err := scanSingleRow(ctx, r.db, "SELECT status FROM api_key_exchange_codes WHERE id = $1", []any{id}, &status); err != nil {
