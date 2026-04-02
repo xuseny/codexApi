@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
@@ -250,18 +249,7 @@ func (r *apiKeyExchangeRepository) GetByCode(ctx context.Context, code string) (
 	return &item, nil
 }
 
-func (r *apiKeyExchangeRepository) DeleteUnused(ctx context.Context, id int64) error {
-	var status string
-	if err := scanSingleRow(ctx, r.db, "SELECT status FROM api_key_exchange_codes WHERE id = $1", []any{id}, &status); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return service.ErrAPIKeyExchangeCodeNotFound
-		}
-		return err
-	}
-	if status != service.APIKeyExchangeStatusUnused {
-		return service.ErrAPIKeyExchangeDeleteActivated
-	}
-
+func (r *apiKeyExchangeRepository) Delete(ctx context.Context, id int64) error {
 	res, err := r.db.ExecContext(ctx, "DELETE FROM api_key_exchange_codes WHERE id = $1", id)
 	if err != nil {
 		return err

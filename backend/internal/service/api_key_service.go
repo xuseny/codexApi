@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -668,6 +669,30 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	s.lastUsedTouchL1.Delete(id)
 
 	return nil
+}
+
+func (s *APIKeyService) BatchDelete(ctx context.Context, ids []int64, userID int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	validIDs, err := s.VerifyOwnership(ctx, userID, ids)
+	if err != nil {
+		return 0, err
+	}
+
+	var deleted int64
+	for _, id := range validIDs {
+		if err := s.Delete(ctx, id, userID); err != nil {
+			if errors.Is(err, ErrAPIKeyNotFound) || errors.Is(err, ErrInsufficientPerms) {
+				continue
+			}
+			return deleted, err
+		}
+		deleted++
+	}
+
+	return deleted, nil
 }
 
 // ValidateKey 验证API Key是否有效（用于认证中间件）

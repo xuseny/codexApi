@@ -331,7 +331,7 @@ func (h *RedeemHandler) GenerateAPIKeyExchangeCodes(c *gin.Context) {
 	})
 }
 
-// DeleteAPIKeyExchangeCode handles deleting an unused code.
+// DeleteAPIKeyExchangeCode handles deleting an api key exchange code.
 // DELETE /api/v1/admin/key-exchange-codes/:id
 func (h *RedeemHandler) DeleteAPIKeyExchangeCode(c *gin.Context) {
 	if h.apiKeyExchangeService == nil {
@@ -351,6 +351,34 @@ func (h *RedeemHandler) DeleteAPIKeyExchangeCode(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "API key exchange code deleted successfully"})
+}
+
+// BatchDeleteAPIKeyExchangeCodes handles batch deleting api key exchange codes.
+// POST /api/v1/admin/key-exchange-codes/batch-delete
+func (h *RedeemHandler) BatchDeleteAPIKeyExchangeCodes(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	var req struct {
+		IDs []int64 `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	deleted, err := h.apiKeyExchangeService.BatchDeleteCodes(c.Request.Context(), req.IDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"deleted": deleted,
+		"message": "API key exchange codes deleted successfully",
+	})
 }
 
 // Delete handles deleting a redeem code

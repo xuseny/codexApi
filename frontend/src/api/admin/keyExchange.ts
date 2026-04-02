@@ -43,11 +43,23 @@ export async function deleteCode(id: number): Promise<{ message: string }> {
   return data
 }
 
+export async function batchDelete(ids: number[]): Promise<{
+  deleted: number
+  message: string
+}> {
+  const { data } = await apiClient.post<{
+    deleted: number
+    message: string
+  }>('/admin/key-exchange-codes/batch-delete', { ids })
+  return data
+}
+
 export const keyExchangeAPI = {
   list,
   getById,
   generate,
-  delete: deleteCode
+  delete: deleteCode,
+  batchDelete
 }
 
 export default keyExchangeAPI

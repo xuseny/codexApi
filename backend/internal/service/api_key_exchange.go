@@ -26,7 +26,6 @@ const (
 var (
 	ErrAPIKeyExchangeCodeNotFound      = infraerrors.NotFound("API_KEY_EXCHANGE_CODE_NOT_FOUND", "api key exchange code not found")
 	ErrAPIKeyExchangeCodeDisabled      = infraerrors.Forbidden("API_KEY_EXCHANGE_CODE_DISABLED", "api key exchange code is disabled")
-	ErrAPIKeyExchangeDeleteActivated   = infraerrors.Conflict("API_KEY_EXCHANGE_CODE_DELETE_ACTIVATED", "cannot delete activated api key exchange code")
 	ErrAPIKeyExchangeInvalidConfig     = infraerrors.BadRequest("API_KEY_EXCHANGE_INVALID_CONFIG", "invalid api key exchange config")
 	ErrAPIKeyExchangeOrphanedAPIKey    = infraerrors.Conflict("API_KEY_EXCHANGE_ORPHANED_API_KEY", "exchange code is activated but linked api key is missing")
 	ErrAPIKeyExchangeTooManyRequested  = infraerrors.BadRequest("API_KEY_EXCHANGE_TOO_MANY_REQUESTED", "too many codes requested")
@@ -109,7 +108,7 @@ type APIKeyExchangeRepository interface {
 	List(ctx context.Context, params pagination.PaginationParams, filters APIKeyExchangeCodeListFilters) ([]APIKeyExchangeCode, *pagination.PaginationResult, error)
 	GetByID(ctx context.Context, id int64) (*APIKeyExchangeCode, error)
 	GetByCode(ctx context.Context, code string) (*APIKeyExchangeCode, error)
-	DeleteUnused(ctx context.Context, id int64) error
+	Delete(ctx context.Context, id int64) error
 	Resolve(ctx context.Context, code string, apiKeyName string, apiKeyValue string, activatedIP string) (*APIKeyExchangeCode, string, error)
 	GetUsageSummary(ctx context.Context, apiKeyID int64, todayStart, end time.Time) (*APIKeyExchangeUsageSummary, error)
 }
@@ -221,7 +220,21 @@ func (s *APIKeyExchangeService) GetCodeByID(ctx context.Context, id int64) (*API
 }
 
 func (s *APIKeyExchangeService) DeleteCode(ctx context.Context, id int64) error {
-	return s.repo.DeleteUnused(ctx, id)
+	return s.repo.Delete(ctx, id)
+}
+
+func (s *APIKeyExchangeService) BatchDeleteCodes(ctx context.Context, ids []int64) (int64, error) {
+	var deleted int64
+	for _, id := range ids {
+		if err := s.repo.Delete(ctx, id); err != nil {
+			if errors.Is(err, ErrAPIKeyExchangeCodeNotFound) {
+				continue
+			}
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
 }
 
 func (s *APIKeyExchangeService) KickOffline(ctx context.Context, code string) (*APIKeyExchangeKickOfflineResult, error) {

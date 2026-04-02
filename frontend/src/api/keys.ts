@@ -115,6 +115,17 @@ export async function deleteKey(id: number): Promise<{ message: string }> {
   return data
 }
 
+export async function batchDelete(ids: number[]): Promise<{
+  deleted: number
+  message: string
+}> {
+  const { data } = await apiClient.post<{
+    deleted: number
+    message: string
+  }>('/keys/batch-delete', { ids })
+  return data
+}
+
 /**
  * Toggle API key status (active/inactive)
  * @param id - API key ID
@@ -131,6 +142,7 @@ export const keysAPI = {
   create,
   update,
   delete: deleteKey,
+  batchDelete,
   toggleStatus
 }
 

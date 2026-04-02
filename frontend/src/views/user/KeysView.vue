@@ -41,6 +41,14 @@
         >
           <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
         </button>
+        <button
+          @click="openBatchDelete"
+          :disabled="selectedCount === 0"
+          class="btn btn-danger"
+        >
+          <Icon name="trash" size="md" class="mr-2" />
+          {{ t('keys.batchDeleteAction') }}
+        </button>
         <button @click="showCreateModal = true" class="btn btn-primary" data-tour="keys-create-btn">
           <Icon name="plus" size="md" class="mr-2" />
           {{ t('keys.createKey') }}
@@ -50,6 +58,26 @@
 
       <template #table>
         <DataTable :columns="columns" :data="apiKeys" :loading="loading">
+          <template #header-select>
+            <input
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              :checked="allVisibleSelected"
+              @click.stop
+              @change="toggleSelectAllVisible"
+            />
+          </template>
+
+          <template #cell-select="{ row }">
+            <input
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              :checked="isKeySelected(row.id)"
+              @click.stop
+              @change="toggleSelectRow(row.id, $event)"
+            />
+          </template>
+
           <template #cell-key="{ value, row }">
             <div class="flex items-center gap-2">
               <code class="code text-xs">
@@ -888,6 +916,17 @@
       @cancel="showDeleteDialog = false"
     />
 
+    <ConfirmDialog
+      :show="showBatchDeleteDialog"
+      :title="t('keys.batchDelete')"
+      :message="t('keys.batchDeleteConfirm', { count: selectedCount })"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="handleBatchDelete"
+      @cancel="showBatchDeleteDialog = false"
+    />
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaDialog"
@@ -1037,33 +1076,34 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
-	import { useI18n } from 'vue-i18n'
-	import { useAppStore } from '@/stores/app'
-	import { useOnboardingStore } from '@/stores/onboarding'
-	import { useClipboard } from '@/composables/useClipboard'
-import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-
-const { t } = useI18n()
+import { computed, onMounted, onUnmounted, ref, type ComponentPublicInstance } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useTableSelection } from '@/composables/useTableSelection'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
-	import DataTable from '@/components/common/DataTable.vue'
-	import Pagination from '@/components/common/Pagination.vue'
-	import BaseDialog from '@/components/common/BaseDialog.vue'
-	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-	import EmptyState from '@/components/common/EmptyState.vue'
-	import Select from '@/components/common/Select.vue'
-	import SearchInput from '@/components/common/SearchInput.vue'
-	import Icon from '@/components/icons/Icon.vue'
-	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
-	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
-	import GroupBadge from '@/components/common/GroupBadge.vue'
-	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
+import DataTable from '@/components/common/DataTable.vue'
+import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import Select from '@/components/common/Select.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import Icon from '@/components/icons/Icon.vue'
+import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+import EndpointPopover from '@/components/keys/EndpointPopover.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
+import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
+import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform } from '@/types'
+import { useClipboard } from '@/composables/useClipboard'
+import { useAppStore } from '@/stores/app'
+import { useOnboardingStore } from '@/stores/onboarding'
 import { formatDateTime } from '@/utils/format'
+
+const { t } = useI18n()
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -1087,6 +1127,7 @@ const onboardingStore = useOnboardingStore()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const columns = computed<Column[]>(() => [
+  { key: 'select', label: '' },
   { key: 'name', label: t('common.name'), sortable: true },
   { key: 'key', label: t('keys.apiKey'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: false },
@@ -1108,6 +1149,21 @@ let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
 const userGroupRates = ref<Record<number, number>>({})
 
+const {
+  selectedIds: selectedKeyIds,
+  selectedCount,
+  allVisibleSelected,
+  isSelected: isKeySelected,
+  select: selectKey,
+  deselect: deselectKey,
+  clear: clearSelectedKeys,
+  removeMany: removeSelectedKeys,
+  toggleVisible: toggleVisibleKeys
+} = useTableSelection<ApiKey>({
+  rows: apiKeys,
+  getId: (row) => row.id
+})
+
 const pagination = ref({
   page: 1,
   page_size: getPersistedPageSize(),
@@ -1123,6 +1179,7 @@ const filterGroupId = ref<string | number>('')
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showDeleteDialog = ref(false)
+const showBatchDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
 const showUseKeyModal = ref(false)
@@ -1360,6 +1417,23 @@ const handlePageSizeChange = (pageSize: number) => {
   loadApiKeys()
 }
 
+const toggleSelectAllVisible = (event: Event) => {
+  toggleVisibleKeys((event.target as HTMLInputElement).checked)
+}
+
+const toggleSelectRow = (id: number, event: Event) => {
+  if ((event.target as HTMLInputElement).checked) {
+    selectKey(id)
+    return
+  }
+  deselectKey(id)
+}
+
+const openBatchDelete = () => {
+  if (selectedCount.value === 0) return
+  showBatchDeleteDialog.value = true
+}
+
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
@@ -1568,11 +1642,30 @@ const handleDelete = async () => {
   try {
     await keysAPI.delete(selectedKey.value.id)
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
+    removeSelectedKeys([selectedKey.value.id])
     showDeleteDialog.value = false
     loadApiKeys()
   } catch (error: any) {
     // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
     const errorMsg = error?.message || t('keys.failedToDelete')
+    appStore.showError(errorMsg)
+  }
+}
+
+const handleBatchDelete = async () => {
+  if (selectedKeyIds.value.length === 0) {
+    showBatchDeleteDialog.value = false
+    return
+  }
+
+  try {
+    const result = await keysAPI.batchDelete(selectedKeyIds.value)
+    appStore.showSuccess(t('keys.batchDeleteSuccess', { count: result.deleted }))
+    clearSelectedKeys()
+    showBatchDeleteDialog.value = false
+    await loadApiKeys()
+  } catch (error: any) {
+    const errorMsg = error?.response?.data?.detail || error?.message || t('keys.batchDeleteFailed')
     appStore.showError(errorMsg)
   }
 }

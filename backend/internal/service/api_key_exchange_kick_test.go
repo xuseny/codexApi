@@ -44,8 +44,8 @@ func (s *apiKeyExchangeKickRepoStub) GetByCode(ctx context.Context, code string)
 	return &clone, nil
 }
 
-func (s *apiKeyExchangeKickRepoStub) DeleteUnused(context.Context, int64) error {
-	panic("unexpected DeleteUnused call")
+func (s *apiKeyExchangeKickRepoStub) Delete(context.Context, int64) error {
+	panic("unexpected Delete call")
 }
 
 func (s *apiKeyExchangeKickRepoStub) Resolve(context.Context, string, string, string, string) (*APIKeyExchangeCode, string, error) {

@@ -104,6 +104,7 @@ func registerAPIKeyExchangeCodeRoutes(admin *gin.RouterGroup, h *handler.Handler
 		codes.GET("", h.Admin.Redeem.ListAPIKeyExchangeCodes)
 		codes.GET("/:id", h.Admin.Redeem.GetAPIKeyExchangeCodeByID)
 		codes.POST("/generate", h.Admin.Redeem.GenerateAPIKeyExchangeCodes)
+		codes.POST("/batch-delete", h.Admin.Redeem.BatchDeleteAPIKeyExchangeCodes)
 		codes.DELETE("/:id", h.Admin.Redeem.DeleteAPIKeyExchangeCode)
 	}
 }

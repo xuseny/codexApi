@@ -24,6 +24,14 @@
               <button class="btn btn-secondary" :disabled="loading" @click="loadCodes">
                 <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
               </button>
+              <button
+                class="btn btn-danger"
+                :disabled="selectedCount === 0"
+                @click="openBatchDelete"
+              >
+                <Icon name="trash" size="md" class="mr-2" />
+                {{ t('admin.keyExchange.batchDeleteAction') }}
+              </button>
               <button class="btn btn-primary" @click="showGenerateDialog = true">
                 {{ t('admin.keyExchange.generateCodes') }}
               </button>
@@ -34,6 +42,26 @@
 
       <template #table>
         <DataTable :columns="columns" :data="codes" :loading="loading">
+          <template #header-select>
+            <input
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              :checked="allVisibleSelected"
+              @click.stop
+              @change="toggleSelectAllVisible"
+            />
+          </template>
+
+          <template #cell-select="{ row }">
+            <input
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              :checked="isSelected(row.id)"
+              @click.stop
+              @change="toggleSelectRow(row.id, $event)"
+            />
+          </template>
+
           <template #cell-code="{ value }">
             <div class="flex items-center gap-2">
               <code class="font-mono text-xs text-gray-900 dark:text-white">{{ value }}</code>
@@ -90,14 +118,12 @@
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-2">
               <button
-                v-if="row.status === 'unused'"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                 @click="confirmDelete(row)"
               >
                 <Icon name="trash" size="sm" />
                 <span class="text-xs">{{ t('common.delete') }}</span>
               </button>
-              <span v-else class="text-gray-400">-</span>
             </div>
           </template>
         </DataTable>
@@ -124,6 +150,17 @@
       danger
       @confirm="handleDelete"
       @cancel="showDeleteDialog = false"
+    />
+
+    <ConfirmDialog
+      :show="showBatchDeleteDialog"
+      :title="t('admin.keyExchange.batchDeleteTitle')"
+      :message="t('admin.keyExchange.batchDeleteConfirm', { count: selectedCount })"
+      :confirm-text="t('common.delete')"
+      :cancel-text="t('common.cancel')"
+      danger
+      @confirm="handleBatchDelete"
+      @cancel="showBatchDeleteDialog = false"
     />
 
     <Teleport to="body">
@@ -237,6 +274,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyExchangeAPI, groupsAPI } from '@/api/admin'
 import { useClipboard } from '@/composables/useClipboard'
+import { useTableSelection } from '@/composables/useTableSelection'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 import type { APIKeyExchangeCode, SelectOption, AdminGroup } from '@/types'
@@ -266,7 +304,23 @@ const pagination = ref({
 const showGenerateDialog = ref(false)
 const showResultDialog = ref(false)
 const showDeleteDialog = ref(false)
+const showBatchDeleteDialog = ref(false)
 const deletingId = ref<number | null>(null)
+
+const {
+  selectedIds,
+  selectedCount,
+  allVisibleSelected,
+  isSelected,
+  select,
+  deselect,
+  clear: clearSelectedCodes,
+  removeMany: removeSelectedCodes,
+  toggleVisible
+} = useTableSelection<APIKeyExchangeCode>({
+  rows: codes,
+  getId: (row) => row.id
+})
 
 const form = ref({
   count: 20,
@@ -293,6 +347,7 @@ const groupOptions = computed<SelectOption[]>(() => [
 ])
 
 const columns = computed<Column[]>(() => [
+  { key: 'select', label: '' },
   { key: 'code', label: t('admin.keyExchange.code') },
   { key: 'status', label: t('admin.keyExchange.status') },
   { key: 'batch_no', label: t('admin.keyExchange.batchNo') },
@@ -354,6 +409,23 @@ function handlePageSizeChange(pageSize: number) {
   loadCodes()
 }
 
+function toggleSelectAllVisible(event: Event) {
+  toggleVisible((event.target as HTMLInputElement).checked)
+}
+
+function toggleSelectRow(id: number, event: Event) {
+  if ((event.target as HTMLInputElement).checked) {
+    select(id)
+    return
+  }
+  deselect(id)
+}
+
+function openBatchDelete() {
+  if (selectedCount.value === 0) return
+  showBatchDeleteDialog.value = true
+}
+
 function confirmDelete(row: APIKeyExchangeCode) {
   deletingId.value = row.id
   showDeleteDialog.value = true
@@ -364,11 +436,29 @@ async function handleDelete() {
   try {
     await keyExchangeAPI.delete(deletingId.value)
     appStore.showSuccess(t('admin.keyExchange.deletedSuccess'))
+    removeSelectedCodes([deletingId.value])
     showDeleteDialog.value = false
     deletingId.value = null
     await loadCodes()
   } catch (error: any) {
     appStore.showError(error?.response?.data?.detail || error?.message || t('admin.keyExchange.failedToDelete'))
+  }
+}
+
+async function handleBatchDelete() {
+  if (selectedIds.value.length === 0) {
+    showBatchDeleteDialog.value = false
+    return
+  }
+
+  try {
+    const result = await keyExchangeAPI.batchDelete(selectedIds.value)
+    appStore.showSuccess(t('admin.keyExchange.batchDeleteSuccess', { count: result.deleted }))
+    clearSelectedCodes()
+    showBatchDeleteDialog.value = false
+    await loadCodes()
+  } catch (error: any) {
+    appStore.showError(error?.response?.data?.detail || error?.message || t('admin.keyExchange.batchDeleteFailed'))
   }
 }
 
