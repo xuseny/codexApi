@@ -11,6 +11,5 @@ func RegisterAPIKeyExchangeRoutes(v1 *gin.RouterGroup, h *handler.Handlers) {
 	keyExchange := v1.Group("/key-exchange")
 	{
 		keyExchange.POST("/resolve", h.Setting.ResolveAPIKeyExchange)
-		keyExchange.POST("/kick-offline", h.Setting.KickAPIKeyExchangeOffline)
 	}
 }

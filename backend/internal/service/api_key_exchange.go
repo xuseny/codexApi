@@ -92,7 +92,6 @@ type APIKeyExchangeResolveResult struct {
 	TodayActualCost float64
 	TotalActualCost float64
 	TotalRequests   int64
-	OnlineDevice    *APIKeyOnlineDeviceInfo
 	Group           *Group
 }
 
@@ -314,10 +313,6 @@ func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activa
 	}
 
 	status := normalizeAPIKeyExchangeAPIKeyStatus(record.APIKey)
-	onlineDevice, err := s.apiKeyService.GetOnlineDeviceInfo(ctx, *record.APIKeyID)
-	if err != nil {
-		onlineDevice = nil
-	}
 	return &APIKeyExchangeResolveResult{
 		Code:            record.Code,
 		Status:          record.Status,
@@ -333,7 +328,6 @@ func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activa
 		TodayActualCost: summary.TodayActualCost,
 		TotalActualCost: summary.TotalActualCost,
 		TotalRequests:   summary.TotalRequests,
-		OnlineDevice:    onlineDevice,
 		Group:           record.Group,
 	}, nil
 }

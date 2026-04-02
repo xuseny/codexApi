@@ -492,7 +492,7 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	require.Equal(t, 1, touchCalls)
 }
 
-func TestAPIKeyAuthRejectsWhenSingleDeviceLockOccupied(t *testing.T) {
+func TestAPIKeyAuthAllowsWhenSingleDeviceLockOccupied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
@@ -536,9 +536,8 @@ func TestAPIKeyAuthRejectsWhenSingleDeviceLockOccupied(t *testing.T) {
 	req.Header.Set("User-Agent", "codex_cli_rs/0.104.0")
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusConflict, w.Code)
-	require.Contains(t, w.Body.String(), "API_KEY_SINGLE_DEVICE_LIMIT")
-	require.Contains(t, w.Body.String(), "API key 只能同时在线一台设备")
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "\"ok\":true")
 }
 
 func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {

@@ -142,15 +142,6 @@ func APIKeyExchangeResolveResponseFromService(result *service.APIKeyExchangeReso
 	if result == nil {
 		return nil
 	}
-	var onlineDevice *APIKeyOnlineDeviceInfo
-	if result.OnlineDevice != nil {
-		onlineDevice = &APIKeyOnlineDeviceInfo{
-			DeviceLabel: result.OnlineDevice.DeviceLabel,
-			ClientIP:    result.OnlineDevice.ClientIP,
-			UserAgent:   result.OnlineDevice.UserAgent,
-			UpdatedAt:   result.OnlineDevice.UpdatedAt,
-		}
-	}
 	return &APIKeyExchangeResolveResponse{
 		Code:            result.Code,
 		Status:          result.Status,
@@ -166,7 +157,6 @@ func APIKeyExchangeResolveResponseFromService(result *service.APIKeyExchangeReso
 		TodayActualCost: result.TodayActualCost,
 		TotalActualCost: result.TotalActualCost,
 		TotalRequests:   result.TotalRequests,
-		OnlineDevice:    onlineDevice,
 		Group:           GroupFromServiceShallow(result.Group),
 	}
 }

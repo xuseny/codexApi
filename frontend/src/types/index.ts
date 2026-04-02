@@ -1144,13 +1144,6 @@ export interface APIKeyExchangeResolveRequest {
   timezone?: string
 }
 
-export interface APIKeyOnlineDeviceInfo {
-  device_label: string
-  client_ip?: string | null
-  user_agent?: string | null
-  updated_at?: string | null
-}
-
 export interface APIKeyExchangeResolveResponse {
   code: string
   status: APIKeyExchangeCodeStatus
@@ -1166,19 +1159,7 @@ export interface APIKeyExchangeResolveResponse {
   today_actual_cost: number
   total_actual_cost: number
   total_requests: number
-  online_device?: APIKeyOnlineDeviceInfo | null
   group?: Group
-}
-
-export interface APIKeyExchangeKickOfflineRequest {
-  code: string
-}
-
-export interface APIKeyExchangeKickOfflineResponse {
-  code: string
-  api_key_id: number
-  api_key_name: string
-  released: boolean
 }
 
 // ==================== Dashboard & Statistics ====================

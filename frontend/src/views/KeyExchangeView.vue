@@ -85,50 +85,6 @@
           </div>
         </div>
 
-        <div class="rounded-3xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20">
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-sm font-semibold text-amber-800 dark:text-amber-200">
-                {{ t('keyExchange.selfHelpTitle') }}
-              </h2>
-              <p class="mt-1 text-sm text-amber-700/90 dark:text-amber-200/80">
-                {{ t('keyExchange.selfHelpDescription') }}
-              </p>
-            </div>
-            <button
-              type="button"
-              :disabled="kickingOffline"
-              class="inline-flex items-center justify-center rounded-2xl bg-amber-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
-              @click="showKickOfflineDialog = true"
-            >
-              <Icon v-if="!kickingOffline" name="ban" size="sm" class="mr-2" />
-              <svg v-else class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25" />
-                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
-              </svg>
-              {{ kickingOffline ? t('keyExchange.kickingOffline') : t('keyExchange.kickOffline') }}
-            </button>
-          </div>
-          <div class="mt-4 rounded-2xl border border-amber-200/80 bg-white/80 p-4 dark:border-amber-900/60 dark:bg-dark-900/80">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
-              {{ t('keyExchange.onlineDeviceTitle') }}
-            </h3>
-            <div v-if="result.online_device?.device_label" class="mt-3 space-y-2 text-sm">
-              <div class="flex items-center justify-between gap-4">
-                <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.onlineDeviceCurrent') }}</span>
-                <span class="text-right font-medium text-gray-900 dark:text-white">{{ result.online_device.device_label }}</span>
-              </div>
-              <div v-if="result.online_device.updated_at" class="flex items-center justify-between gap-4">
-                <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.onlineDeviceLastSeen') }}</span>
-                <span class="text-right font-medium text-gray-900 dark:text-white">{{ formatDateTime(result.online_device.updated_at) }}</span>
-              </div>
-            </div>
-            <p v-else class="mt-3 text-sm text-gray-500 dark:text-dark-400">
-              {{ t('keyExchange.onlineDeviceEmpty') }}
-            </p>
-          </div>
-        </div>
-
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
             <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">
@@ -266,6 +222,37 @@
                   <pre class="mt-3 overflow-x-auto whitespace-pre-wrap break-all rounded-xl bg-gray-900 p-4 text-xs text-gray-100">{{ file.content }}</pre>
                 </details>
               </div>
+
+              <div
+                v-if="showCcsImportCard"
+                class="rounded-2xl border border-blue-200 bg-blue-50/80 p-4 dark:border-blue-900/60 dark:bg-blue-950/20"
+              >
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span class="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-200">
+                        CC-Switch
+                      </span>
+                      <span class="text-sm font-semibold text-gray-900 dark:text-white">
+                        {{ t('keys.importToCcSwitch') }}
+                      </span>
+                    </div>
+                    <div class="mt-3 space-y-1 text-xs text-gray-500 dark:text-dark-400">
+                      <p>{{ t('common.name') }}: {{ siteName }}</p>
+                      <p>{{ t('keyExchange.apiBaseUrl') }}: {{ ccsImportEndpoint }}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    @click="handleImportToCcs"
+                  >
+                    <Icon name="upload" size="sm" class="mr-2" />
+                    {{ t('keys.importToCcSwitch') }}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -320,21 +307,58 @@
       </section>
     </main>
 
-    <ConfirmDialog
-      :show="showKickOfflineDialog"
-      :title="t('keyExchange.kickOfflineConfirmTitle')"
-      :message="t('keyExchange.kickOfflineConfirmMessage')"
-      :confirm-text="t('keyExchange.kickOffline')"
-      @confirm="handleKickOffline"
-      @cancel="showKickOfflineDialog = false"
-    />
+    <BaseDialog
+      :show="showCcsClientSelect"
+      :title="t('keys.ccsClientSelect.title')"
+      width="narrow"
+      @close="closeCcsClientSelect"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('keys.ccsClientSelect.description') }}
+        </p>
+        <div class="grid grid-cols-2 gap-3">
+          <button
+            @click="handleCcsClientSelect('claude')"
+            class="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 p-4 transition-all hover:border-primary-500 hover:bg-primary-50 dark:border-dark-600 dark:hover:border-primary-500 dark:hover:bg-primary-900/20"
+          >
+            <Icon name="terminal" size="xl" class="text-gray-600 dark:text-gray-400" />
+            <span class="font-medium text-gray-900 dark:text-white">
+              {{ t('keys.ccsClientSelect.claudeCode') }}
+            </span>
+            <span class="text-center text-xs text-gray-500 dark:text-gray-400">
+              {{ t('keys.ccsClientSelect.claudeCodeDesc') }}
+            </span>
+          </button>
+          <button
+            @click="handleCcsClientSelect('gemini')"
+            class="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 p-4 transition-all hover:border-primary-500 hover:bg-primary-50 dark:border-dark-600 dark:hover:border-primary-500 dark:hover:bg-primary-900/20"
+          >
+            <Icon name="sparkles" size="xl" class="text-gray-600 dark:text-gray-400" />
+            <span class="font-medium text-gray-900 dark:text-white">
+              {{ t('keys.ccsClientSelect.geminiCli') }}
+            </span>
+            <span class="text-center text-xs text-gray-500 dark:text-gray-400">
+              {{ t('keys.ccsClientSelect.geminiCliDesc') }}
+            </span>
+          </button>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button @click="closeCcsClientSelect" class="btn btn-secondary">
+            {{ t('common.cancel') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyExchangeAPI } from '@/api'
@@ -350,15 +374,15 @@ const { copyToClipboard } = useClipboard()
 
 const code = ref('')
 const resolving = ref(false)
-const kickingOffline = ref(false)
-const showKickOfflineDialog = ref(false)
 const result = ref<APIKeyExchangeResolveResponse | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const selectedPresetId = ref<string>('')
+const showCcsClientSelect = ref(false)
 
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => appStore.siteLogo)
 const apiBaseUrl = computed(() => appStore.cachedPublicSettings?.api_base_url || `${window.location.origin}/v1`)
+const ccsImportBaseUrl = computed(() => appStore.cachedPublicSettings?.api_base_url || window.location.origin)
 
 const fileSystemAccessSupported = computed(() => {
   return typeof window !== 'undefined'
@@ -381,6 +405,23 @@ const selectedPreset = computed(() => {
   return configPresets.value.find((item) => item.id === selectedPresetId.value) || configPresets.value[0] || null
 })
 
+const showCcsImportCard = computed(() => {
+  return Boolean(
+    result.value?.api_key
+    && result.value?.group?.platform
+    && selectedPreset.value?.id === 'opencode'
+    && !appStore.cachedPublicSettings?.hide_ccs_import_button
+  )
+})
+
+const ccsImportEndpoint = computed(() => {
+  const platform = result.value?.group?.platform
+  if (platform === 'antigravity') {
+    return `${ccsImportBaseUrl.value}/antigravity`
+  }
+  return ccsImportBaseUrl.value
+})
+
 const remainingQuotaLabel = computed(() => {
   if (!result.value) return '-'
   if (result.value.quota <= 0) return t('keyExchange.unlimited')
@@ -398,6 +439,97 @@ function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+}
+
+function executeCcsImport(clientType: 'claude' | 'gemini') {
+  if (!result.value?.api_key) {
+    return
+  }
+
+  const platform = result.value.group?.platform || 'anthropic'
+  const baseUrl = ccsImportBaseUrl.value
+
+  let app: string
+  let endpoint: string
+
+  if (platform === 'antigravity') {
+    app = clientType === 'gemini' ? 'gemini' : 'claude'
+    endpoint = `${baseUrl}/antigravity`
+  } else {
+    switch (platform) {
+      case 'openai':
+        app = 'codex'
+        endpoint = baseUrl
+        break
+      case 'gemini':
+        app = 'gemini'
+        endpoint = baseUrl
+        break
+      default:
+        app = 'claude'
+        endpoint = baseUrl
+    }
+  }
+
+  const usageScript = `({
+    request: {
+      url: "{{baseUrl}}/v1/usage",
+      method: "GET",
+      headers: { "Authorization": "Bearer {{apiKey}}" }
+    },
+    extractor: function(response) {
+      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
+      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
+      return {
+        isValid: response?.is_active ?? response?.isValid ?? true,
+        remaining,
+        unit
+      };
+    }
+  })`
+
+  const providerName = siteName.value.trim() || 'sub2api'
+  const params = new URLSearchParams({
+    resource: 'provider',
+    app,
+    name: providerName,
+    homepage: baseUrl,
+    endpoint,
+    apiKey: result.value.api_key,
+    configFormat: 'json',
+    usageEnabled: 'true',
+    usageScript: btoa(usageScript),
+    usageAutoInterval: '30'
+  })
+
+  try {
+    window.open(`ccswitch://v1/import?${params.toString()}`, '_self')
+    setTimeout(() => {
+      if (document.hasFocus()) {
+        appStore.showError(t('keys.ccSwitchNotInstalled'))
+      }
+    }, 100)
+  } catch (error) {
+    appStore.showError(t('keys.ccSwitchNotInstalled'))
+  }
+}
+
+function handleImportToCcs() {
+  const platform = result.value?.group?.platform || 'anthropic'
+  if (platform === 'antigravity') {
+    showCcsClientSelect.value = true
+    return
+  }
+  executeCcsImport(platform === 'gemini' ? 'gemini' : 'claude')
+}
+
+function handleCcsClientSelect(clientType: 'claude' | 'gemini') {
+  executeCcsImport(clientType)
+  showCcsClientSelect.value = false
+}
+
+function closeCcsClientSelect() {
+  showCcsClientSelect.value = false
 }
 
 function downloadConfigFile(file: KeyExchangeConfigFile) {
@@ -465,28 +597,6 @@ async function handleResolve() {
     appStore.showError(error?.response?.data?.detail || error?.message || t('keyExchange.resolveFailed'))
   } finally {
     resolving.value = false
-  }
-}
-
-async function handleKickOffline() {
-  const trimmed = (result.value?.code || code.value).trim().toUpperCase()
-  if (!trimmed) {
-    appStore.showInfo(t('keyExchange.codeRequired'))
-    return
-  }
-
-  showKickOfflineDialog.value = false
-  kickingOffline.value = true
-  try {
-    await keyExchangeAPI.kickOffline(trimmed)
-    if (result.value) {
-      result.value.online_device = null
-    }
-    appStore.showSuccess(t('keyExchange.kickOfflineSuccess'))
-  } catch (error: any) {
-    appStore.showError(error?.message || t('keyExchange.kickOfflineFailed'))
-  } finally {
-    kickingOffline.value = false
   }
 }
 
