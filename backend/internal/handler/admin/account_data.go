@@ -696,6 +696,7 @@ func enrichOpenAICredentialsFromJWT(item *DataAccount) {
 		setIfMissing("chatgpt_account_id", userInfo.ChatGPTAccountID)
 		setIfMissing("chatgpt_user_id", userInfo.ChatGPTUserID)
 		setIfMissing("organization_id", userInfo.OrganizationID)
+		setIfMissing("client_id", strings.TrimSpace(claims.ClientID))
 	}
 
 	applyClaims(credentialString(item.Credentials, "id_token"), "id_token")

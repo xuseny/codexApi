@@ -58,6 +58,10 @@ type TestEvent struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type accountTestTokenProvider interface {
+	GetAccessToken(ctx context.Context, account *Account) (string, error)
+}
+
 const (
 	defaultGeminiTextTestPrompt  = "hi"
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
@@ -66,7 +70,9 @@ const (
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
-	geminiTokenProvider       *GeminiTokenProvider
+	claudeTokenProvider       accountTestTokenProvider
+	openAITokenProvider       accountTestTokenProvider
+	geminiTokenProvider       accountTestTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
@@ -81,7 +87,9 @@ const defaultSoraTestCooldown = 10 * time.Second
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
-	geminiTokenProvider *GeminiTokenProvider,
+	claudeTokenProvider accountTestTokenProvider,
+	openAITokenProvider accountTestTokenProvider,
+	geminiTokenProvider accountTestTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
@@ -89,6 +97,8 @@ func NewAccountTestService(
 ) *AccountTestService {
 	return &AccountTestService{
 		accountRepo:               accountRepo,
+		claudeTokenProvider:       claudeTokenProvider,
+		openAITokenProvider:       openAITokenProvider,
 		geminiTokenProvider:       geminiTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
 		httpUpstream:              httpUpstream,
@@ -233,7 +243,14 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		// OAuth or Setup Token - use Bearer token
 		useBearer = true
 		apiURL = testClaudeAPIURL
-		authToken = account.GetCredential("access_token")
+		if account.Type == AccountTypeOAuth && s.claudeTokenProvider != nil {
+			authToken, err = s.claudeTokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", err.Error()))
+			}
+		} else {
+			authToken = account.GetCredential("access_token")
+		}
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
@@ -458,7 +475,14 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if account.IsOAuth() {
 		isOAuth = true
 		// OAuth - use Bearer token with ChatGPT internal API
-		authToken = account.GetOpenAIAccessToken()
+		if account.Type == AccountTypeOAuth && s.openAITokenProvider != nil {
+			authToken, err = s.openAITokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", err.Error()))
+			}
+		} else {
+			authToken = account.GetOpenAIAccessToken()
+		}
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
@@ -512,9 +536,18 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {
 		req.Host = "chatgpt.com"
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
 		req.Header.Set("accept", "text/event-stream")
+		req.Header.Set("originator", "codex_cli_rs")
 		if chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
+		}
+		customUA := account.GetOpenAIUserAgent()
+		if customUA != "" {
+			req.Header.Set("user-agent", customUA)
+		}
+		if !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
+			req.Header.Set("user-agent", codexCLIUserAgent)
 		}
 	}
 

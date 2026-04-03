@@ -259,6 +259,7 @@ type IDTokenClaims struct {
 	Aud           []string `json:"aud"` // OpenAI returns aud as an array
 	Exp           int64    `json:"exp"`
 	Iat           int64    `json:"iat"`
+	ClientID      string   `json:"client_id,omitempty"`
 
 	// OpenAI specific claims (nested under https://api.openai.com/auth)
 	OpenAIAuth *OpenAIAuthClaims `json:"https://api.openai.com/auth,omitempty"`

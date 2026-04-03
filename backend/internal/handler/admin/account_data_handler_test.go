@@ -277,6 +277,7 @@ func TestImportDataEnrichesOpenAIFieldsFromAccessToken(t *testing.T) {
 
 	accessToken := testJWT(t, map[string]any{
 		"email": "imported@example.com",
+		"client_id": "app_test_client",
 		"https://api.openai.com/auth": map[string]any{
 			"chatgpt_account_id": "chatgpt-acc",
 			"chatgpt_user_id":    "chatgpt-user",
@@ -324,6 +325,7 @@ func TestImportDataEnrichesOpenAIFieldsFromAccessToken(t *testing.T) {
 	require.Equal(t, "plus", creds["plan_type"])
 	require.Equal(t, "org-default", creds["organization_id"])
 	require.Equal(t, "imported@example.com", creds["email"])
+	require.Equal(t, "app_test_client", creds["client_id"])
 }
 
 func testJWT(t *testing.T, payload map[string]any) string {

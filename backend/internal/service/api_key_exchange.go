@@ -324,7 +324,7 @@ func (s *APIKeyExchangeService) RedeemQuota(ctx context.Context, exchangeCode st
 		return nil, infraerrors.BadRequest("API_KEY_EXCHANGE_CODE_REQUIRED", "exchange code is required")
 	}
 
-	redeemCode = strings.TrimSpace(redeemCode)
+	redeemCode = strings.ToUpper(strings.TrimSpace(redeemCode))
 	if redeemCode == "" {
 		return nil, infraerrors.BadRequest("REDEEM_CODE_REQUIRED", "redeem code is required")
 	}

@@ -167,6 +167,7 @@
                 <input
                   v-model="quotaRedeemCode"
                   type="text"
+                  autocapitalize="characters"
                   spellcheck="false"
                   :placeholder="t('keyExchange.redeemCodePlaceholder')"
                   :disabled="redeemingQuota || !canRedeemQuota"
@@ -681,7 +682,7 @@ async function handleRedeemQuota() {
   }
 
   const exchangeCode = (result.value.code || code.value).trim().toUpperCase()
-  const redeemCode = quotaRedeemCode.value.trim()
+  const redeemCode = quotaRedeemCode.value.trim().toUpperCase()
   if (!exchangeCode) {
     appStore.showInfo(t('keyExchange.codeRequired'))
     return

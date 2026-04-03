@@ -160,7 +160,7 @@ func TestAPIKeyExchangeService_RedeemQuota_Success(t *testing.T) {
 	result, err := svc.RedeemQuota(context.Background(), " abcd-efgh-ijkl-mnop ", "quota-code-1", "Asia/Shanghai")
 	require.NoError(t, err)
 	require.Equal(t, "ABCD-EFGH-IJKL-MNOP", repo.lastExchangeCode)
-	require.Equal(t, "quota-code-1", repo.lastRedeemCode)
+	require.Equal(t, "QUOTA-CODE-1", repo.lastRedeemCode)
 	require.Equal(t, 8.5, result.Amount)
 	require.NotNil(t, result.Exchange)
 	require.Equal(t, apiKeyID, result.Exchange.APIKeyID)
