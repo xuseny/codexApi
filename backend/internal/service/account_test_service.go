@@ -238,6 +238,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	var authToken string
 	var useBearer bool
 	var apiURL string
+	var err error
 
 	if account.IsOAuth() {
 		// OAuth or Setup Token - use Bearer token
@@ -471,6 +472,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
+	var err error
 
 	if account.IsOAuth() {
 		isOAuth = true
