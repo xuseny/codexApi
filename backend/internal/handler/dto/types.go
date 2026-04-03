@@ -105,6 +105,12 @@ type APIKeyExchangeResolveResponse struct {
 	Group *Group `json:"group,omitempty"`
 }
 
+type APIKeyExchangeQuotaRedeemResponse struct {
+	Amount     float64                      `json:"amount"`
+	RedeemCode string                       `json:"redeem_code"`
+	Result     *APIKeyExchangeResolveResponse `json:"result,omitempty"`
+}
+
 type Group struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`

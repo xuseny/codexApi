@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 type Account struct {
@@ -181,6 +182,15 @@ func (a *Account) GetCredential(key string) string {
 		return ""
 	}
 	v, ok := a.Credentials[key]
+	if (!ok || v == nil) && key == "access_token" {
+		v, ok = a.Credentials["token"]
+	}
+	if (!ok || v == nil) && key == "refresh_token" {
+		v, ok = a.Credentials["rt"]
+	}
+	if (!ok || v == nil) && key == "session_token" {
+		v, ok = a.Credentials["st"]
+	}
 	if !ok || v == nil {
 		return ""
 	}
@@ -852,21 +862,39 @@ func (a *Account) GetChatGPTAccountID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
 	}
-	return a.GetCredential("chatgpt_account_id")
+	if accountID := a.GetCredential("chatgpt_account_id"); accountID != "" {
+		return accountID
+	}
+	if userInfo := a.getOpenAIUserInfoFromJWT(); userInfo != nil {
+		return userInfo.ChatGPTAccountID
+	}
+	return ""
 }
 
 func (a *Account) GetChatGPTUserID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
 	}
-	return a.GetCredential("chatgpt_user_id")
+	if userID := a.GetCredential("chatgpt_user_id"); userID != "" {
+		return userID
+	}
+	if userInfo := a.getOpenAIUserInfoFromJWT(); userInfo != nil {
+		return userInfo.ChatGPTUserID
+	}
+	return ""
 }
 
 func (a *Account) GetOpenAIOrganizationID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
 	}
-	return a.GetCredential("organization_id")
+	if organizationID := a.GetCredential("organization_id"); organizationID != "" {
+		return organizationID
+	}
+	if userInfo := a.getOpenAIUserInfoFromJWT(); userInfo != nil {
+		return userInfo.OrganizationID
+	}
+	return ""
 }
 
 func (a *Account) GetOpenAITokenExpiresAt() *time.Time {
@@ -882,6 +910,31 @@ func (a *Account) IsOpenAITokenExpired() bool {
 		return false
 	}
 	return time.Now().Add(60 * time.Second).After(*expiresAt)
+}
+
+func (a *Account) getOpenAIUserInfoFromJWT() *openai.UserInfo {
+	if a == nil || a.Credentials == nil || !a.IsOpenAIOAuth() {
+		return nil
+	}
+
+	for _, key := range []string{"id_token", "access_token"} {
+		rawToken := a.GetCredential(key)
+		if rawToken == "" {
+			continue
+		}
+
+		claims, err := openai.DecodeIDToken(rawToken)
+		if err != nil {
+			continue
+		}
+		if userInfo := claims.GetUserInfo(); userInfo != nil {
+			if userInfo.ChatGPTAccountID != "" || userInfo.ChatGPTUserID != "" || userInfo.OrganizationID != "" {
+				return userInfo
+			}
+		}
+	}
+
+	return nil
 }
 
 // IsMixedSchedulingEnabled 检查 antigravity 账户是否启用混合调度

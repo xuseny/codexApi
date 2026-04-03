@@ -28,6 +28,12 @@ type ResolveAPIKeyExchangeRequest struct {
 	Timezone string `json:"timezone"`
 }
 
+type RedeemAPIKeyExchangeQuotaRequest struct {
+	ExchangeCode string `json:"exchange_code" binding:"required"`
+	RedeemCode   string `json:"redeem_code" binding:"required"`
+	Timezone     string `json:"timezone"`
+}
+
 // GetPublicSettings handles GET /api/v1/settings/public.
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
@@ -85,4 +91,26 @@ func (h *SettingHandler) ResolveAPIKeyExchange(c *gin.Context) {
 	}
 
 	response.Success(c, dto.APIKeyExchangeResolveResponseFromService(result))
+}
+
+// RedeemAPIKeyExchangeQuota handles POST /api/v1/key-exchange/redeem-quota.
+func (h *SettingHandler) RedeemAPIKeyExchangeQuota(c *gin.Context) {
+	if h.apiKeyExchangeService == nil {
+		response.InternalError(c, "api key exchange service not configured")
+		return
+	}
+
+	var req RedeemAPIKeyExchangeQuotaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.apiKeyExchangeService.RedeemQuota(c.Request.Context(), req.ExchangeCode, req.RedeemCode, req.Timezone)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.APIKeyExchangeQuotaRedeemResponseFromService(result))
 }

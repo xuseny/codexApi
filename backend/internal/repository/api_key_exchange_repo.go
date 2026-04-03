@@ -336,6 +336,106 @@ func (r *apiKeyExchangeRepository) Resolve(ctx context.Context, code string, api
 	return item, action, nil
 }
 
+func (r *apiKeyExchangeRepository) RedeemQuota(ctx context.Context, exchangeCode string, redeemCode string) (*service.APIKeyExchangeCode, float64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	record, err := r.getByCodeForUpdate(ctx, tx, exchangeCode)
+	if err != nil {
+		return nil, 0, err
+	}
+	if record.Status == service.APIKeyExchangeStatusDisabled {
+		return nil, 0, service.ErrAPIKeyExchangeCodeDisabled
+	}
+	if record.APIKeyID == nil {
+		if record.Status == service.APIKeyExchangeStatusUnused {
+			return nil, 0, service.ErrAPIKeyExchangeCodeNotActivated
+		}
+		return nil, 0, service.ErrAPIKeyExchangeOrphanedAPIKey
+	}
+
+	apiKey, err := r.getAPIKeyForUpdate(ctx, tx, *record.APIKeyID)
+	if err != nil {
+		if err == service.ErrAPIKeyNotFound {
+			return nil, 0, service.ErrAPIKeyExchangeOrphanedAPIKey
+		}
+		return nil, 0, err
+	}
+
+	switch normalizeAPIKeyExchangeRechargeStatus(apiKey) {
+	case service.StatusAPIKeyDisabled, service.StatusAPIKeyExpired:
+		return nil, 0, service.ErrAPIKeyExchangeQuotaDisabled
+	}
+	if apiKey.Quota <= 0 {
+		return nil, 0, service.ErrAPIKeyExchangeQuotaUnlimited
+	}
+
+	redeem, err := r.getRedeemCodeForUpdate(ctx, tx, redeemCode)
+	if err != nil {
+		return nil, 0, err
+	}
+	if redeem.Status != service.StatusUnused {
+		return nil, 0, service.ErrRedeemCodeUsed
+	}
+	if redeem.Type != service.RedeemTypeAPIKeyQuota || redeem.Value <= 0 {
+		return nil, 0, service.ErrAPIKeyExchangeRedeemCodeInvalid
+	}
+
+	now := time.Now()
+	res, err := tx.ExecContext(
+		ctx,
+		`UPDATE redeem_codes
+		 SET status = $1, used_by = $2, used_at = $3
+		 WHERE id = $4 AND status = $5`,
+		service.StatusUsed,
+		record.OwnerUserID,
+		now,
+		redeem.ID,
+		service.StatusUnused,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return nil, 0, service.ErrRedeemCodeUsed
+	}
+
+	if err := scanSingleRow(
+		ctx,
+		tx,
+		`UPDATE api_keys
+		 SET
+			quota = quota + $1,
+			status = CASE
+				WHEN status = $2 AND quota + $1 > quota_used THEN $3
+				ELSE status
+			END,
+			updated_at = $4
+		 WHERE id = $5 AND deleted_at IS NULL
+		 RETURNING id`,
+		[]any{redeem.Value, service.StatusAPIKeyQuotaExhausted, service.StatusAPIKeyActive, now, apiKey.ID},
+		&apiKey.ID,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, 0, service.ErrAPIKeyExchangeOrphanedAPIKey
+		}
+		return nil, 0, err
+	}
+
+	item, err := r.getByIDWithExecutor(ctx, tx, record.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, 0, err
+	}
+	return item, redeem.Value, nil
+}
+
 func (r *apiKeyExchangeRepository) GetUsageSummary(ctx context.Context, apiKeyID int64, todayStart, end time.Time) (*service.APIKeyExchangeUsageSummary, error) {
 	query := `
 		SELECT
@@ -502,6 +602,83 @@ func (r *apiKeyExchangeRepository) insertAPIKeyFromExchange(ctx context.Context,
 	}
 
 	return apiKeyID, createdAt, updatedAt, nil
+}
+
+func (r *apiKeyExchangeRepository) getAPIKeyForUpdate(ctx context.Context, tx *sql.Tx, id int64) (*service.APIKey, error) {
+	query := `
+		SELECT id, key, name, status, quota, quota_used, expires_at, last_used_at
+		FROM api_keys
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`
+
+	var (
+		item       service.APIKey
+		expiresAt  sql.NullTime
+		lastUsedAt sql.NullTime
+	)
+	if err := tx.QueryRowContext(ctx, query, id).Scan(
+		&item.ID,
+		&item.Key,
+		&item.Name,
+		&item.Status,
+		&item.Quota,
+		&item.QuotaUsed,
+		&expiresAt,
+		&lastUsedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, service.ErrAPIKeyNotFound
+		}
+		return nil, err
+	}
+	if expiresAt.Valid {
+		item.ExpiresAt = &expiresAt.Time
+	}
+	if lastUsedAt.Valid {
+		item.LastUsedAt = &lastUsedAt.Time
+	}
+	return &item, nil
+}
+
+func (r *apiKeyExchangeRepository) getRedeemCodeForUpdate(ctx context.Context, tx *sql.Tx, code string) (*service.RedeemCode, error) {
+	query := `
+		SELECT id, code, type, value, status
+		FROM redeem_codes
+		WHERE code = $1
+		FOR UPDATE
+	`
+
+	var item service.RedeemCode
+	if err := tx.QueryRowContext(ctx, query, code).Scan(
+		&item.ID,
+		&item.Code,
+		&item.Type,
+		&item.Value,
+		&item.Status,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, service.ErrRedeemCodeNotFound
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+func normalizeAPIKeyExchangeRechargeStatus(apiKey *service.APIKey) string {
+	if apiKey == nil {
+		return ""
+	}
+	if apiKey.IsExpired() {
+		return service.StatusAPIKeyExpired
+	}
+	if apiKey.IsQuotaExhausted() {
+		return service.StatusAPIKeyQuotaExhausted
+	}
+	if apiKey.Status == service.StatusAPIKeyDisabled || apiKey.Status == "inactive" {
+		return service.StatusAPIKeyDisabled
+	}
+	return service.StatusAPIKeyActive
 }
 
 func (r *apiKeyExchangeRepository) getByIDWithExecutor(ctx context.Context, exec sqlExecutor, id int64) (*service.APIKeyExchangeCode, error) {

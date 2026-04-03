@@ -298,7 +298,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			}
 		}
 
-		enrichCredentialsFromIDToken(&item)
+		enrichImportedCredentials(&item)
 
 		accountInput := &service.CreateAccountInput{
 			Name:                 item.Name,
@@ -614,6 +614,115 @@ func enrichCredentialsFromIDToken(item *DataAccount) {
 	setIfMissing("chatgpt_account_id", userInfo.ChatGPTAccountID)
 	setIfMissing("chatgpt_user_id", userInfo.ChatGPTUserID)
 	setIfMissing("organization_id", userInfo.OrganizationID)
+}
+
+func enrichImportedCredentials(item *DataAccount) {
+	if item == nil || item.Credentials == nil {
+		return
+	}
+	normalizeImportedCredentialAliases(item)
+	enrichOpenAICredentialsFromJWT(item)
+}
+
+func normalizeImportedCredentialAliases(item *DataAccount) {
+	if item == nil || item.Credentials == nil {
+		return
+	}
+
+	accountType := strings.ToLower(strings.TrimSpace(item.Type))
+	if accountType != service.AccountTypeOAuth && accountType != service.AccountTypeSetupToken {
+		return
+	}
+
+	if credentialString(item.Credentials, "access_token") == "" {
+		if legacyToken := credentialString(item.Credentials, "token"); legacyToken != "" {
+			item.Credentials["access_token"] = legacyToken
+		}
+	}
+	if credentialString(item.Credentials, "refresh_token") == "" {
+		if legacyRefreshToken := credentialString(item.Credentials, "rt"); legacyRefreshToken != "" {
+			item.Credentials["refresh_token"] = legacyRefreshToken
+		}
+	}
+	if credentialString(item.Credentials, "session_token") == "" {
+		if legacySessionToken := credentialString(item.Credentials, "st"); legacySessionToken != "" {
+			item.Credentials["session_token"] = legacySessionToken
+		}
+	}
+}
+
+func enrichOpenAICredentialsFromJWT(item *DataAccount) {
+	if item == nil || item.Credentials == nil {
+		return
+	}
+
+	platform := strings.ToLower(strings.TrimSpace(item.Platform))
+	if platform != service.PlatformOpenAI && platform != service.PlatformSora {
+		return
+	}
+
+	accountType := strings.ToLower(strings.TrimSpace(item.Type))
+	if accountType != service.AccountTypeOAuth && accountType != service.AccountTypeSetupToken {
+		return
+	}
+
+	setIfMissing := func(key, value string) {
+		if value == "" {
+			return
+		}
+		if existing := credentialString(item.Credentials, key); existing == "" {
+			item.Credentials[key] = value
+		}
+	}
+
+	applyClaims := func(rawToken, source string) {
+		if rawToken == "" {
+			return
+		}
+
+		claims, err := openai.DecodeIDToken(rawToken)
+		if err != nil {
+			slog.Debug("import_enrich_jwt_decode_failed", "account", item.Name, "source", source, "error", err)
+			return
+		}
+
+		userInfo := claims.GetUserInfo()
+		if userInfo == nil {
+			return
+		}
+
+		setIfMissing("email", userInfo.Email)
+		setIfMissing("plan_type", userInfo.PlanType)
+		setIfMissing("chatgpt_account_id", userInfo.ChatGPTAccountID)
+		setIfMissing("chatgpt_user_id", userInfo.ChatGPTUserID)
+		setIfMissing("organization_id", userInfo.OrganizationID)
+	}
+
+	applyClaims(credentialString(item.Credentials, "id_token"), "id_token")
+	applyClaims(credentialString(item.Credentials, "access_token"), "access_token")
+}
+
+func credentialString(credentials map[string]any, key string) string {
+	if credentials == nil {
+		return ""
+	}
+	v, ok := credentials[key]
+	if !ok || v == nil {
+		return ""
+	}
+
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case float64:
+		return strconv.FormatInt(int64(val), 10)
+	default:
+		return strings.TrimSpace(fmt.Sprint(val))
+	}
 }
 
 func normalizeProxyStatus(status string) string {

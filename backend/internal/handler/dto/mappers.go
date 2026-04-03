@@ -161,6 +161,17 @@ func APIKeyExchangeResolveResponseFromService(result *service.APIKeyExchangeReso
 	}
 }
 
+func APIKeyExchangeQuotaRedeemResponseFromService(result *service.APIKeyExchangeQuotaRedeemResult) *APIKeyExchangeQuotaRedeemResponse {
+	if result == nil {
+		return nil
+	}
+	return &APIKeyExchangeQuotaRedeemResponse{
+		Amount:     result.Amount,
+		RedeemCode: result.RedeemCode,
+		Result:     APIKeyExchangeResolveResponseFromService(result.Exchange),
+	}
+}
+
 func GroupFromServiceShallow(g *service.Group) *Group {
 	if g == nil {
 		return nil

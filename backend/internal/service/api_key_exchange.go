@@ -32,6 +32,9 @@ var (
 	ErrAPIKeyExchangeNegativeQuota     = infraerrors.BadRequest("API_KEY_EXCHANGE_NEGATIVE_QUOTA", "quota must be greater than or equal to 0")
 	ErrAPIKeyExchangeNegativeExpiry    = infraerrors.BadRequest("API_KEY_EXCHANGE_NEGATIVE_EXPIRY", "expires_in_days must be greater than or equal to 0")
 	ErrAPIKeyExchangeCodeNotActivated  = infraerrors.Conflict("API_KEY_EXCHANGE_CODE_NOT_ACTIVATED", "exchange code has not been activated yet")
+	ErrAPIKeyExchangeQuotaDisabled     = infraerrors.Forbidden("API_KEY_EXCHANGE_QUOTA_DISABLED", "api key status does not allow quota recharge")
+	ErrAPIKeyExchangeQuotaUnlimited    = infraerrors.BadRequest("API_KEY_EXCHANGE_QUOTA_UNLIMITED", "api key has unlimited quota and does not need recharge")
+	ErrAPIKeyExchangeRedeemCodeInvalid = infraerrors.BadRequest("API_KEY_EXCHANGE_REDEEM_CODE_INVALID", "redeem code is not for api key quota recharge")
 )
 
 type APIKeyExchangeCode struct {
@@ -95,6 +98,12 @@ type APIKeyExchangeResolveResult struct {
 	Group           *Group
 }
 
+type APIKeyExchangeQuotaRedeemResult struct {
+	Amount     float64
+	RedeemCode string
+	Exchange   *APIKeyExchangeResolveResult
+}
+
 type APIKeyExchangeKickOfflineResult struct {
 	Code       string `json:"code"`
 	APIKeyID   int64  `json:"api_key_id"`
@@ -109,6 +118,7 @@ type APIKeyExchangeRepository interface {
 	GetByCode(ctx context.Context, code string) (*APIKeyExchangeCode, error)
 	Delete(ctx context.Context, id int64) error
 	Resolve(ctx context.Context, code string, apiKeyName string, apiKeyValue string, activatedIP string) (*APIKeyExchangeCode, string, error)
+	RedeemQuota(ctx context.Context, exchangeCode string, redeemCode string) (*APIKeyExchangeCode, float64, error)
 	GetUsageSummary(ctx context.Context, apiKeyID int64, todayStart, end time.Time) (*APIKeyExchangeUsageSummary, error)
 }
 
@@ -305,6 +315,45 @@ func (s *APIKeyExchangeService) Resolve(ctx context.Context, code string, activa
 		return nil, ErrAPIKeyExchangeOrphanedAPIKey
 	}
 
+	return s.buildResolveResult(ctx, record, action, userTimezone)
+}
+
+func (s *APIKeyExchangeService) RedeemQuota(ctx context.Context, exchangeCode string, redeemCode string, userTimezone string) (*APIKeyExchangeQuotaRedeemResult, error) {
+	exchangeCode = strings.ToUpper(strings.TrimSpace(exchangeCode))
+	if exchangeCode == "" {
+		return nil, infraerrors.BadRequest("API_KEY_EXCHANGE_CODE_REQUIRED", "exchange code is required")
+	}
+
+	redeemCode = strings.TrimSpace(redeemCode)
+	if redeemCode == "" {
+		return nil, infraerrors.BadRequest("REDEEM_CODE_REQUIRED", "redeem code is required")
+	}
+
+	record, amount, err := s.repo.RedeemQuota(ctx, exchangeCode, redeemCode)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil || record.APIKey == nil || record.APIKeyID == nil {
+		return nil, ErrAPIKeyExchangeOrphanedAPIKey
+	}
+
+	if s.apiKeyService != nil && strings.TrimSpace(record.APIKey.Key) != "" {
+		s.apiKeyService.InvalidateAuthCacheByKey(ctx, record.APIKey.Key)
+	}
+
+	exchange, err := s.buildResolveResult(ctx, record, APIKeyExchangeActionQueried, userTimezone)
+	if err != nil {
+		return nil, err
+	}
+
+	return &APIKeyExchangeQuotaRedeemResult{
+		Amount:     amount,
+		RedeemCode: redeemCode,
+		Exchange:   exchange,
+	}, nil
+}
+
+func (s *APIKeyExchangeService) buildResolveResult(ctx context.Context, record *APIKeyExchangeCode, action string, userTimezone string) (*APIKeyExchangeResolveResult, error) {
 	now := timezone.NowInUserLocation(userTimezone)
 	todayStart := timezone.StartOfDayInUserLocation(now, userTimezone)
 	summary, err := s.repo.GetUsageSummary(ctx, *record.APIKeyID, todayStart, now)
@@ -350,7 +399,7 @@ func normalizeAPIKeyExchangeAPIKeyStatus(apiKey *APIKey) string {
 	if apiKey.IsQuotaExhausted() {
 		return StatusAPIKeyQuotaExhausted
 	}
-	if apiKey.Status == StatusAPIKeyDisabled {
+	if apiKey.Status == StatusAPIKeyDisabled || apiKey.Status == "inactive" {
 		return StatusAPIKeyDisabled
 	}
 	return StatusAPIKeyActive

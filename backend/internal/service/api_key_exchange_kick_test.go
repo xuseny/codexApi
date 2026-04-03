@@ -52,6 +52,10 @@ func (s *apiKeyExchangeKickRepoStub) Resolve(context.Context, string, string, st
 	panic("unexpected Resolve call")
 }
 
+func (s *apiKeyExchangeKickRepoStub) RedeemQuota(context.Context, string, string) (*APIKeyExchangeCode, float64, error) {
+	panic("unexpected RedeemQuota call")
+}
+
 func (s *apiKeyExchangeKickRepoStub) GetUsageSummary(context.Context, int64, time.Time, time.Time) (*APIKeyExchangeUsageSummary, error) {
 	panic("unexpected GetUsageSummary call")
 }

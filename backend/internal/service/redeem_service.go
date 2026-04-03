@@ -343,6 +343,9 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 			return nil, fmt.Errorf("assign or extend subscription: %w", err)
 		}
 
+	case RedeemTypeAPIKeyQuota:
+		return nil, infraerrors.BadRequest("REDEEM_CODE_TARGET_MISMATCH", "this redeem code must be used on the key exchange page")
+
 	default:
 		return nil, fmt.Errorf("unsupported redeem type: %s", redeemCode.Type)
 	}

@@ -137,6 +137,61 @@
           </div>
         </div>
 
+        <div class="rounded-3xl border border-amber-200 bg-white p-5 shadow-sm dark:border-amber-900/60 dark:bg-dark-900 sm:p-6">
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t('keyExchange.quotaRechargeTitle') }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+                {{ t('keyExchange.quotaRechargeDescription') }}
+              </p>
+            </div>
+
+            <div
+              class="rounded-2xl px-3 py-2 text-xs"
+              :class="canRedeemQuota
+                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+                : 'border border-gray-200 bg-gray-50 text-gray-500 dark:border-dark-700 dark:bg-dark-950/60 dark:text-dark-300'"
+            >
+              {{ canRedeemQuota ? t('keyExchange.quotaRechargeAvailable') : quotaRechargeUnavailableReason }}
+            </div>
+          </div>
+
+          <form class="mt-5 space-y-4" @submit.prevent="handleRedeemQuota">
+            <div>
+              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-dark-200">
+                {{ t('keyExchange.redeemCodeLabel') }}
+              </label>
+              <div class="flex flex-col gap-3 sm:flex-row">
+                <input
+                  v-model="quotaRedeemCode"
+                  type="text"
+                  spellcheck="false"
+                  :placeholder="t('keyExchange.redeemCodePlaceholder')"
+                  :disabled="redeemingQuota || !canRedeemQuota"
+                  class="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-base outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-700 dark:bg-dark-950 dark:focus:ring-primary-900"
+                />
+                <button
+                  type="submit"
+                  :disabled="redeemingQuota || !canRedeemQuota"
+                  class="inline-flex min-w-[180px] items-center justify-center rounded-2xl bg-amber-500 px-5 py-3 text-sm font-medium text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Icon v-if="!redeemingQuota" name="gift" size="sm" class="mr-2" />
+                  <svg v-else class="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25" />
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+                  </svg>
+                  {{ redeemingQuota ? t('keyExchange.quotaRecharging') : t('keyExchange.quotaRechargeButton') }}
+                </button>
+              </div>
+              <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">
+                {{ t('keyExchange.quotaRechargeHint') }}
+              </p>
+            </div>
+          </form>
+        </div>
+
         <div class="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900 sm:p-6">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -375,6 +430,8 @@ const { copyToClipboard } = useClipboard()
 const code = ref('')
 const resolving = ref(false)
 const result = ref<APIKeyExchangeResolveResponse | null>(null)
+const quotaRedeemCode = ref('')
+const redeemingQuota = ref(false)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const selectedPresetId = ref<string>('')
 const showCcsClientSelect = ref(false)
@@ -426,6 +483,22 @@ const remainingQuotaLabel = computed(() => {
   if (!result.value) return '-'
   if (result.value.quota <= 0) return t('keyExchange.unlimited')
   return `$${Math.max(result.value.quota - result.value.quota_used, 0).toFixed(4)}`
+})
+
+const canRedeemQuota = computed(() => {
+  return Boolean(
+    result.value
+    && result.value.quota > 0
+    && (result.value.api_key_status === 'active' || result.value.api_key_status === 'quota_exhausted')
+  )
+})
+
+const quotaRechargeUnavailableReason = computed(() => {
+  if (!result.value) return t('keyExchange.codeRequired')
+  if (result.value.quota <= 0) return t('keyExchange.quotaRechargeUnlimited')
+  if (result.value.api_key_status === 'expired') return t('keyExchange.quotaRechargeExpired')
+  if (result.value.api_key_status === 'disabled') return t('keyExchange.quotaRechargeDisabled')
+  return t('keyExchange.quotaRechargeUnavailable')
 })
 
 function quotaLabel(quota: number): string {
@@ -588,6 +661,7 @@ async function handleResolve() {
   try {
     result.value = await keyExchangeAPI.resolve(trimmed, Intl.DateTimeFormat().resolvedOptions().timeZone)
     code.value = trimmed
+    quotaRedeemCode.value = ''
     appStore.showSuccess(
       result.value.action === 'activated'
         ? t('keyExchange.actionActivated')
@@ -597,6 +671,46 @@ async function handleResolve() {
     appStore.showError(error?.response?.data?.detail || error?.message || t('keyExchange.resolveFailed'))
   } finally {
     resolving.value = false
+  }
+}
+
+async function handleRedeemQuota() {
+  if (!result.value) {
+    appStore.showInfo(t('keyExchange.codeRequired'))
+    return
+  }
+
+  const exchangeCode = (result.value.code || code.value).trim().toUpperCase()
+  const redeemCode = quotaRedeemCode.value.trim()
+  if (!exchangeCode) {
+    appStore.showInfo(t('keyExchange.codeRequired'))
+    return
+  }
+  if (!redeemCode) {
+    appStore.showInfo(t('keyExchange.redeemCodeRequired'))
+    return
+  }
+  if (!canRedeemQuota.value) {
+    appStore.showWarning(quotaRechargeUnavailableReason.value)
+    return
+  }
+
+  redeemingQuota.value = true
+  try {
+    const response = await keyExchangeAPI.redeemQuota(
+      exchangeCode,
+      redeemCode,
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    )
+    if (response.result) {
+      result.value = response.result
+    }
+    quotaRedeemCode.value = ''
+    appStore.showSuccess(t('keyExchange.quotaRechargeSuccess', { amount: response.amount.toFixed(2) }))
+  } catch (error: any) {
+    appStore.showError(error?.response?.data?.detail || error?.message || t('keyExchange.quotaRechargeFailed'))
+  } finally {
+    redeemingQuota.value = false
   }
 }
 

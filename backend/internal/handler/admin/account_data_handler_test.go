@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -229,4 +230,105 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdProxies, 0)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+	require.Equal(t, "x", adminSvc.createdAccounts[0].Credentials["access_token"])
+}
+
+func TestImportDataNormalizesLegacyOAuthCredentialAliases(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "legacy-openai",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"token": "legacy-access-token",
+						"rt":    "legacy-refresh-token",
+						"st":    "legacy-session-token",
+					},
+					"concurrency": 1,
+					"priority":    10,
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 1)
+	creds := adminSvc.createdAccounts[0].Credentials
+	require.Equal(t, "legacy-access-token", creds["access_token"])
+	require.Equal(t, "legacy-refresh-token", creds["refresh_token"])
+	require.Equal(t, "legacy-session-token", creds["session_token"])
+}
+
+func TestImportDataEnrichesOpenAIFieldsFromAccessToken(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	accessToken := testJWT(t, map[string]any{
+		"email": "imported@example.com",
+		"https://api.openai.com/auth": map[string]any{
+			"chatgpt_account_id": "chatgpt-acc",
+			"chatgpt_user_id":    "chatgpt-user",
+			"chatgpt_plan_type":  "plus",
+			"organizations": []map[string]any{
+				{
+					"id":         "org-default",
+					"is_default": true,
+				},
+			},
+		},
+	})
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "jwt-openai",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"access_token": accessToken,
+					},
+					"concurrency": 1,
+					"priority":    5,
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 1)
+	creds := adminSvc.createdAccounts[0].Credentials
+	require.Equal(t, "chatgpt-acc", creds["chatgpt_account_id"])
+	require.Equal(t, "chatgpt-user", creds["chatgpt_user_id"])
+	require.Equal(t, "plus", creds["plan_type"])
+	require.Equal(t, "org-default", creds["organization_id"])
+	require.Equal(t, "imported@example.com", creds["email"])
+}
+
+func testJWT(t *testing.T, payload map[string]any) string {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return "header." + base64.RawURLEncoding.EncodeToString(body) + ".sig"
 }

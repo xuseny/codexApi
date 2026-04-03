@@ -78,7 +78,7 @@
             <span
               :class="[
                 'badge',
-                value === 'balance'
+                value === 'balance' || value === 'api_key_quota'
                   ? 'badge-success'
                   : value === 'subscription'
                     ? 'badge-warning'
@@ -91,7 +91,7 @@
 
           <template #cell-value="{ value, row }">
             <span class="text-sm font-medium text-gray-900 dark:text-white">
-              <template v-if="row.type === 'balance'">${{ value.toFixed(2) }}</template>
+              <template v-if="row.type === 'balance' || row.type === 'api_key_quota'">${{ value.toFixed(2) }}</template>
               <template v-else-if="row.type === 'subscription'">
                 {{ row.validity_days || 30 }} {{ t('admin.redeem.days') }}
                 <span v-if="row.group" class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -214,7 +214,7 @@
             <div v-if="generateForm.type !== 'subscription' && generateForm.type !== 'invitation'">
               <label class="input-label">
                 {{
-                  generateForm.type === 'balance'
+                  generateForm.type === 'balance' || generateForm.type === 'api_key_quota'
                     ? t('admin.redeem.amount')
                     : t('admin.redeem.columns.value')
                 }}
@@ -222,8 +222,8 @@
               <input
                 v-model.number="generateForm.value"
                 type="number"
-                :step="generateForm.type === 'balance' ? '0.01' : '1'"
-                :min="generateForm.type === 'balance' ? '0.01' : '1'"
+                :step="generateForm.type === 'balance' || generateForm.type === 'api_key_quota' ? '0.01' : '1'"
+                :min="generateForm.type === 'balance' || generateForm.type === 'api_key_quota' ? '0.01' : '1'"
                 required
                 class="input"
               />
@@ -505,7 +505,8 @@ const typeOptions = computed(() => [
   { value: 'balance', label: t('admin.redeem.balance') },
   { value: 'concurrency', label: t('admin.redeem.concurrency') },
   { value: 'subscription', label: t('admin.redeem.subscription') },
-  { value: 'invitation', label: t('admin.redeem.invitation') }
+  { value: 'invitation', label: t('admin.redeem.invitation') },
+  { value: 'api_key_quota', label: t('admin.redeem.apiKeyQuota') }
 ])
 
 const filterTypeOptions = computed(() => [
@@ -513,7 +514,8 @@ const filterTypeOptions = computed(() => [
   { value: 'balance', label: t('admin.redeem.balance') },
   { value: 'concurrency', label: t('admin.redeem.concurrency') },
   { value: 'subscription', label: t('admin.redeem.subscription') },
-  { value: 'invitation', label: t('admin.redeem.invitation') }
+  { value: 'invitation', label: t('admin.redeem.invitation') },
+  { value: 'api_key_quota', label: t('admin.redeem.apiKeyQuota') }
 ])
 
 const filterStatusOptions = computed(() => [

@@ -976,7 +976,7 @@ export interface AdminDataImportResult {
 
 // ==================== Usage & Redeem Types ====================
 
-export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
+export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation' | 'api_key_quota'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2'
 
 export interface UsageLog {
@@ -1144,6 +1144,12 @@ export interface APIKeyExchangeResolveRequest {
   timezone?: string
 }
 
+export interface APIKeyExchangeQuotaRedeemRequest {
+  exchange_code: string
+  redeem_code: string
+  timezone?: string
+}
+
 export interface APIKeyExchangeResolveResponse {
   code: string
   status: APIKeyExchangeCodeStatus
@@ -1160,6 +1166,12 @@ export interface APIKeyExchangeResolveResponse {
   total_actual_cost: number
   total_requests: number
   group?: Group
+}
+
+export interface APIKeyExchangeQuotaRedeemResponse {
+  amount: number
+  redeem_code: string
+  result?: APIKeyExchangeResolveResponse
 }
 
 // ==================== Dashboard & Statistics ====================
