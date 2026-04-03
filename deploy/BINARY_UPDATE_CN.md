@@ -7,6 +7,10 @@
 - 使用 `Caddy` 反向代理
 - `PostgreSQL` 与 `Redis` 运行在宿主机
 
+如果你现在已经新增了第 2 台服务器，准备做横向扩容，请优先参考：
+
+- `deploy/BINARY_SCALE_OUT_CN.md`
+
 本文档基于一台实际已部署服务器整理，当前结构如下：
 
 ```text
