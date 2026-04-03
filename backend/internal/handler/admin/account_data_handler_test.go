@@ -233,6 +233,72 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Equal(t, "x", adminSvc.createdAccounts[0].Credentials["access_token"])
 }
 
+func TestImportDataRawPayloadDefaultsToBindDefaultGroup(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	dataPayload := map[string]any{
+		"exported_at": "2026-04-03T11:46:49Z",
+		"proxies":     []map[string]any{},
+		"accounts": []map[string]any{
+			{
+				"name":     "raw-openai",
+				"platform": service.PlatformOpenAI,
+				"type":     service.AccountTypeOAuth,
+				"credentials": map[string]any{
+					"access_token": "access-token",
+				},
+				"concurrency": 10,
+				"priority":    1,
+			},
+		},
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 1)
+	require.False(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+	require.Equal(t, "access-token", adminSvc.createdAccounts[0].Credentials["access_token"])
+}
+
+func TestImportDataWrappedWithoutFlagDefaultsToBindDefaultGroup(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{},
+			"accounts": []map[string]any{
+				{
+					"name":     "wrapped-openai",
+					"platform": service.PlatformOpenAI,
+					"type":     service.AccountTypeOAuth,
+					"credentials": map[string]any{
+						"access_token": "wrapped-access-token",
+					},
+					"concurrency": 2,
+					"priority":    3,
+				},
+			},
+		},
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 1)
+	require.False(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+}
+
 func TestImportDataNormalizesLegacyOAuthCredentialAliases(t *testing.T) {
 	router, adminSvc := setupAccountDataRouter()
 

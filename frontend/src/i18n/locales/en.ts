@@ -198,10 +198,10 @@ export default {
     quotaUsed: 'Used Quota',
     remainingQuota: 'Remaining Quota',
     quotaRechargeTitle: 'Recharge Key Quota',
-    quotaRechargeDescription: 'Use an unused quota redeem code to increase this API key\'s quota limit.',
-    quotaRechargeButton: 'Redeem Quota Code',
+    quotaRechargeDescription: 'Use an unused key exchange code or quota redeem code to increase this API key\'s quota limit.',
+    quotaRechargeButton: 'Redeem Recharge Code',
     quotaRecharging: 'Recharging...',
-    quotaRechargeHint: 'The recharge code only increases this key\'s quota limit. It does not change the owner account balance.',
+    quotaRechargeHint: 'Unused key exchange codes and quota redeem codes can both be used here. Recharging only increases this key\'s quota limit and does not change the owner account balance.',
     quotaRechargeSuccess: 'Quota recharged successfully: +${amount}',
     quotaRechargeFailed: 'Failed to redeem quota code',
     quotaRechargeAvailable: 'Quota recharge available',
@@ -248,9 +248,9 @@ export default {
       quota_exhausted: 'Quota Exhausted',
     },
     codeRequired: 'Please enter an exchange code',
-    redeemCodeLabel: 'Quota Redeem Code',
-    redeemCodePlaceholder: 'Enter an unused quota redeem code',
-    redeemCodeRequired: 'Please enter a quota redeem code',
+    redeemCodeLabel: 'Recharge Code',
+    redeemCodePlaceholder: 'Enter an unused key exchange code or quota redeem code',
+    redeemCodeRequired: 'Please enter a recharge code',
     resolveFailed: 'Failed to process exchange code',
     hint: 'Keep the exchange code safe. You can use it later to query the generated API key.'
   },
@@ -3172,7 +3172,7 @@ export default {
 
     keyExchange: {
       title: 'API Key Exchange Codes',
-      description: 'Generate independent exchange codes for API key creation',
+      description: 'Generate independent exchange codes for API key creation or quota recharge',
       generateCodes: 'Generate Codes',
       searchPlaceholder: 'Search code, batch, or API key...',
       code: 'Code',
@@ -3207,7 +3207,7 @@ export default {
       failedToDelete: 'Failed to delete API key exchange code',
       batchDeleteFailed: 'Failed to batch delete API key exchange codes',
       empty: 'No API key exchange codes yet',
-      emptyDescription: 'Generate codes and distribute them to users for API key creation and later lookup.'
+      emptyDescription: 'Generate codes and distribute them to users for API key creation, quota recharge, and later lookup.'
     },
 
     // Announcements

@@ -198,10 +198,10 @@ export default {
     quotaUsed: '已用额度',
     remainingQuota: '剩余额度',
     quotaRechargeTitle: 'Key 额度充值',
-    quotaRechargeDescription: '使用未兑换的额度兑换码，为当前 API Key 增加用量额度上限。',
-    quotaRechargeButton: '兑换额度充值码',
+    quotaRechargeDescription: '使用未使用的 Key 兑换码或额度兑换码，为当前 API Key 增加用量额度上限。',
+    quotaRechargeButton: '兑换充值码',
     quotaRecharging: '充值中...',
-    quotaRechargeHint: '额度充值只会提高这把 Key 的额度上限，不会修改所属用户的余额。',
+    quotaRechargeHint: '未使用的 Key 兑换码和额度兑换码都可以在这里使用。充值只会提高这把 Key 的额度上限，不会修改所属用户的余额。',
     quotaRechargeSuccess: '额度充值成功：+${amount}',
     quotaRechargeFailed: '额度充值失败',
     quotaRechargeAvailable: '当前可进行额度充值',
@@ -248,9 +248,9 @@ export default {
       quota_exhausted: '额度已用完',
     },
     codeRequired: '请输入兑换码',
-    redeemCodeLabel: '额度兑换码',
-    redeemCodePlaceholder: '请输入未兑换的额度兑换码',
-    redeemCodeRequired: '请输入额度兑换码',
+    redeemCodeLabel: '充值码',
+    redeemCodePlaceholder: '请输入未使用的 Key 兑换码或额度兑换码',
+    redeemCodeRequired: '请输入充值码',
     resolveFailed: '兑换码处理失败',
     hint: '请妥善保存兑换码，后续可用它再次查询已生成的 API Key。'
   },
@@ -3331,7 +3331,7 @@ export default {
 
   keyExchange: {
       title: 'API Key 兑换码管理',
-      description: '批量生成用于创建 API Key 的独立兑换码',
+      description: '批量生成可用于创建 API Key 或充值额度的独立兑换码',
       generateCodes: '生成兑换码',
       searchPlaceholder: '搜索兑换码、批次或 API Key...',
       code: '兑换码',
@@ -3366,7 +3366,7 @@ export default {
       failedToDelete: '删除 API Key 兑换码失败',
       batchDeleteFailed: '批量删除 API Key 兑换码失败',
       empty: '暂无 API Key 兑换码',
-      emptyDescription: '生成后可分发给用户，用户用兑换码领取或回查 API Key。'
+      emptyDescription: '生成后可分发给用户，用户可用兑换码领取 API Key、充值额度或回查现有 Key。'
     },
 
     // Announcements

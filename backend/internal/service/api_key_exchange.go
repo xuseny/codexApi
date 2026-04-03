@@ -34,7 +34,7 @@ var (
 	ErrAPIKeyExchangeCodeNotActivated  = infraerrors.Conflict("API_KEY_EXCHANGE_CODE_NOT_ACTIVATED", "exchange code has not been activated yet")
 	ErrAPIKeyExchangeQuotaDisabled     = infraerrors.Forbidden("API_KEY_EXCHANGE_QUOTA_DISABLED", "api key status does not allow quota recharge")
 	ErrAPIKeyExchangeQuotaUnlimited    = infraerrors.BadRequest("API_KEY_EXCHANGE_QUOTA_UNLIMITED", "api key has unlimited quota and does not need recharge")
-	ErrAPIKeyExchangeRedeemCodeInvalid = infraerrors.BadRequest("API_KEY_EXCHANGE_REDEEM_CODE_INVALID", "redeem code is not for api key quota recharge")
+	ErrAPIKeyExchangeRedeemCodeInvalid = infraerrors.BadRequest("API_KEY_EXCHANGE_REDEEM_CODE_INVALID", "recharge code must be an unused api key quota code or key exchange code with quota")
 )
 
 type APIKeyExchangeCode struct {

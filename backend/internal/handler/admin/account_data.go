@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -172,8 +174,14 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 }
 
 func (h *AccountHandler) ImportData(c *gin.Context) {
-	var req DataImportRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	rawBody, err := c.GetRawData()
+	if err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	req, err := parseDataImportRequest(rawBody)
+	if err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
@@ -189,7 +197,7 @@ func (h *AccountHandler) ImportData(c *gin.Context) {
 }
 
 func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) (DataImportResult, error) {
-	skipDefaultGroupBind := true
+	skipDefaultGroupBind := false
 	if req.SkipDefaultGroupBind != nil {
 		skipDefaultGroupBind = *req.SkipDefaultGroupBind
 	}
@@ -352,6 +360,41 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 	}
 
 	return result, nil
+}
+
+func parseDataImportRequest(rawBody []byte) (DataImportRequest, error) {
+	trimmed := bytes.TrimSpace(rawBody)
+	if len(trimmed) == 0 {
+		return DataImportRequest{}, errors.New("request body is required")
+	}
+
+	var wrapped DataImportRequest
+	if err := json.Unmarshal(trimmed, &wrapped); err == nil {
+		if hasImportPayload(&wrapped.Data) || wrapped.SkipDefaultGroupBind != nil {
+			return wrapped, nil
+		}
+	}
+
+	var payload DataPayload
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return DataImportRequest{}, err
+	}
+	if !hasImportPayload(&payload) {
+		return DataImportRequest{}, errors.New("data is required")
+	}
+
+	return DataImportRequest{Data: payload}, nil
+}
+
+func hasImportPayload(payload *DataPayload) bool {
+	if payload == nil {
+		return false
+	}
+	return payload.ExportedAt != "" ||
+		payload.Type != "" ||
+		payload.Version != 0 ||
+		payload.Proxies != nil ||
+		payload.Accounts != nil
 }
 
 func (h *AccountHandler) listAllProxies(ctx context.Context) ([]service.Proxy, error) {
