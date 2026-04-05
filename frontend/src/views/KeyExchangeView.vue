@@ -445,8 +445,7 @@ import type { APIKeyExchangeResolveResponse } from '@/types'
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
-const AFTER_SALES_QQ_GROUP_NUMBER = '427293497'
-const AFTER_SALES_QQ_GROUP_DEEPLINK = `mqqapi://card/show_pslcard?src_type=internal&version=1&card_type=group&uin=${AFTER_SALES_QQ_GROUP_NUMBER}&source=qrcode`
+const AFTER_SALES_QQ_GROUP_URL = 'https://qm.qq.com/q/bWCIfp2A5W'
 const REDEEM_CODE_PURCHASE_URL = 'https://pay.ldxp.cn/shop/CZYP4OG5'
 
 const code = ref('')
@@ -537,23 +536,17 @@ function toggleTheme() {
 }
 
 function openAfterSalesGroup() {
-  try {
-    window.open(AFTER_SALES_QQ_GROUP_DEEPLINK, '_self')
-    window.setTimeout(() => {
-      if (document.hasFocus()) {
-        appStore.showInfo(`如果没有自动拉起 QQ，请手动搜索群 ${AFTER_SALES_QQ_GROUP_NUMBER}`)
-      }
-    }, 100)
-  } catch (error) {
-    appStore.showInfo(`请手动搜索 QQ 群 ${AFTER_SALES_QQ_GROUP_NUMBER}`)
-  }
+  window.location.assign(AFTER_SALES_QQ_GROUP_URL)
 }
 
 function openRedeemCodePurchase() {
-  const opened = window.open(REDEEM_CODE_PURCHASE_URL, '_blank', 'noopener,noreferrer')
-  if (!opened) {
-    window.location.href = REDEEM_CODE_PURCHASE_URL
-  }
+  const link = document.createElement('a')
+  link.href = REDEEM_CODE_PURCHASE_URL
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 function executeCcsImport(clientType: 'claude' | 'gemini') {

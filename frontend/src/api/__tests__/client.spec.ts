@@ -166,6 +166,40 @@ describe('API Client', () => {
         writable: true,
       })
     })
+
+    it('公开页面上的 401 不应强制跳转到 /login', async () => {
+      localStorage.setItem('auth_token', 'expired-token')
+
+      const originalLocation = window.location
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, pathname: '/key-exchange', href: '/key-exchange' },
+        writable: true,
+      })
+
+      const adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 401,
+          data: { code: 'TOKEN_EXPIRED', message: 'Token expired' },
+        },
+        config: {
+          url: '/auth/me',
+          headers: { Authorization: 'Bearer expired-token' },
+        },
+        code: 'ERR_BAD_REQUEST',
+      })
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.get('/auth/me')).rejects.toBeDefined()
+
+      expect(localStorage.getItem('auth_token')).toBeNull()
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+      expect(window.location.href).toBe('/key-exchange')
+
+      Object.defineProperty(window, 'location', {
+        value: originalLocation,
+        writable: true,
+      })
+    })
   })
 
   // --- 网络错误 ---

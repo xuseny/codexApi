@@ -3,7 +3,7 @@
  * Handles user login, registration, and logout operations
  */
 
-import { apiClient } from './client'
+import { apiClient, publicApiClient } from './client'
 import type {
   LoginRequest,
   RegisterRequest,
@@ -230,7 +230,7 @@ export function isAuthenticated(): boolean {
  * @returns Public settings including registration and Turnstile config
  */
 export async function getPublicSettings(): Promise<PublicSettings> {
-  const { data } = await apiClient.get<PublicSettings>('/settings/public')
+  const { data } = await publicApiClient.get<PublicSettings>('/settings/public')
   return data
 }
 

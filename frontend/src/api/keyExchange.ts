@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+import { publicApiClient } from './client'
 import type {
   APIKeyExchangeQuotaRedeemRequest,
   APIKeyExchangeQuotaRedeemResponse,
@@ -12,7 +12,7 @@ export async function resolve(code: string, timezone?: string): Promise<APIKeyEx
     payload.timezone = timezone
   }
 
-  const { data } = await apiClient.post<APIKeyExchangeResolveResponse>('/key-exchange/resolve', payload)
+  const { data } = await publicApiClient.post<APIKeyExchangeResolveResponse>('/key-exchange/resolve', payload)
   return data
 }
 
@@ -29,7 +29,7 @@ export async function redeemQuota(
     payload.timezone = timezone
   }
 
-  const { data } = await apiClient.post<APIKeyExchangeQuotaRedeemResponse>('/key-exchange/redeem-quota', payload)
+  const { data } = await publicApiClient.post<APIKeyExchangeQuotaRedeemResponse>('/key-exchange/redeem-quota', payload)
   return data
 }
 

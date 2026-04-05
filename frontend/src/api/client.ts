@@ -11,7 +11,29 @@ import { getLocale } from '@/i18n'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
+const PUBLIC_APP_PATHS = [
+  '/setup',
+  '/home',
+  '/login',
+  '/register',
+  '/email-verify',
+  '/auth/callback',
+  '/auth/linuxdo/callback',
+  '/forgot-password',
+  '/reset-password',
+  '/key-usage',
+  '/key-exchange'
+]
+
 export const apiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+export const publicApiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
   headers: {
@@ -52,6 +74,41 @@ const getUserTimezone = (): string => {
   }
 }
 
+function applyCommonRequestHeaders(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
+  if (config.headers) {
+    config.headers['Accept-Language'] = getLocale()
+  }
+
+  if (config.method === 'get') {
+    if (!config.params) {
+      config.params = {}
+    }
+    config.params.timezone = getUserTimezone()
+  }
+
+  return config
+}
+
+function unwrapApiResponse(response: AxiosResponse): AxiosResponse {
+  const apiResponse = response.data as ApiResponse<unknown>
+  if (apiResponse && typeof apiResponse === 'object' && 'code' in apiResponse) {
+    if (apiResponse.code === 0) {
+      response.data = apiResponse.data
+    } else {
+      throw {
+        status: response.status,
+        code: apiResponse.code,
+        message: apiResponse.message || 'Unknown error'
+      }
+    }
+  }
+  return response
+}
+
+export function isPublicAppPath(pathname: string): boolean {
+  return PUBLIC_APP_PATHS.some((path) => pathname === path || pathname.startsWith(path))
+}
+
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     // Attach token from localStorage
@@ -60,20 +117,16 @@ apiClient.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`
     }
 
-    // Attach locale for backend translations
-    if (config.headers) {
-      config.headers['Accept-Language'] = getLocale()
-    }
+    return applyCommonRequestHeaders(config)
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
 
-    // Attach timezone for all GET requests (backend may use it for default date ranges)
-    if (config.method === 'get') {
-      if (!config.params) {
-        config.params = {}
-      }
-      config.params.timezone = getUserTimezone()
-    }
-
-    return config
+publicApiClient.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    return applyCommonRequestHeaders(config)
   },
   (error) => {
     return Promise.reject(error)
@@ -83,24 +136,7 @@ apiClient.interceptors.request.use(
 // ==================== Response Interceptor ====================
 
 apiClient.interceptors.response.use(
-  (response: AxiosResponse) => {
-    // Unwrap standard API response format { code, message, data }
-    const apiResponse = response.data as ApiResponse<unknown>
-    if (apiResponse && typeof apiResponse === 'object' && 'code' in apiResponse) {
-      if (apiResponse.code === 0) {
-        // Success - return the data portion
-        response.data = apiResponse.data
-      } else {
-        // API error
-        return Promise.reject({
-          status: response.status,
-          code: apiResponse.code,
-          message: apiResponse.message || 'Unknown error'
-        })
-      }
-    }
-    return response
-  },
+  (response: AxiosResponse) => unwrapApiResponse(response),
   async (error: AxiosError<ApiResponse<unknown>>) => {
     // Request cancellation: keep the original axios cancellation error so callers can ignore it.
     // Otherwise we'd misclassify it as a generic "network error".
@@ -114,6 +150,8 @@ apiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
       const url = String(error.config?.url || '')
+      const currentPath = window.location.pathname || '/'
+      const suppressAuthRedirect = isPublicAppPath(currentPath)
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
       const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
@@ -225,9 +263,11 @@ apiClient.interceptors.response.use(
             localStorage.removeItem('refresh_token')
             localStorage.removeItem('auth_user')
             localStorage.removeItem('token_expires_at')
-            sessionStorage.setItem('auth_expired', '1')
+            if (!suppressAuthRedirect) {
+              sessionStorage.setItem('auth_expired', '1')
+            }
 
-            if (!window.location.pathname.includes('/login')) {
+            if (!suppressAuthRedirect && !window.location.pathname.includes('/login')) {
               window.location.href = '/login'
             }
 
@@ -254,11 +294,11 @@ apiClient.interceptors.response.use(
         localStorage.removeItem('refresh_token')
         localStorage.removeItem('auth_user')
         localStorage.removeItem('token_expires_at')
-        if ((hasToken || sentAuth) && !isAuthEndpoint) {
+        if ((hasToken || sentAuth) && !isAuthEndpoint && !suppressAuthRedirect) {
           sessionStorage.setItem('auth_expired', '1')
         }
         // Only redirect if not already on login page
-        if (!window.location.pathname.includes('/login')) {
+        if (!suppressAuthRedirect && !window.location.pathname.includes('/login')) {
           window.location.href = '/login'
         }
       }
@@ -273,6 +313,32 @@ apiClient.interceptors.response.use(
     }
 
     // Network error
+    return Promise.reject({
+      status: 0,
+      message: 'Network error. Please check your connection.'
+    })
+  }
+)
+
+publicApiClient.interceptors.response.use(
+  (response: AxiosResponse) => unwrapApiResponse(response),
+  (error: AxiosError<ApiResponse<unknown>>) => {
+    if (error.code === 'ERR_CANCELED' || axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
+
+    if (error.response) {
+      const { status, data } = error.response
+      const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
+
+      return Promise.reject({
+        status,
+        code: apiData.code,
+        error: apiData.error,
+        message: apiData.message || apiData.detail || error.message
+      })
+    }
+
     return Promise.reject({
       status: 0,
       message: 'Network error. Please check your connection.'
