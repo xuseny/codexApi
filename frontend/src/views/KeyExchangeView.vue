@@ -30,6 +30,24 @@
         <p class="mx-auto mt-3 max-w-2xl text-sm text-gray-500 dark:text-dark-400 sm:text-base">
           {{ t('keyExchange.subtitle') }}
         </p>
+        <div class="mt-5 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <button
+            type="button"
+            class="btn btn-secondary w-full sm:w-auto"
+            @click="openAfterSalesGroup"
+          >
+            <Icon name="users" size="sm" class="mr-2" />
+            加入售后群
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary w-full sm:w-auto"
+            @click="openRedeemCodePurchase"
+          >
+            <Icon name="externalLink" size="sm" class="mr-2" />
+            购买兑换码
+          </button>
+        </div>
       </section>
 
       <section class="mx-auto mt-8 w-full max-w-3xl rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900 sm:p-8">
@@ -427,6 +445,9 @@ import type { APIKeyExchangeResolveResponse } from '@/types'
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
+const AFTER_SALES_QQ_GROUP_NUMBER = '427293497'
+const AFTER_SALES_QQ_GROUP_DEEPLINK = `mqqapi://card/show_pslcard?src_type=internal&version=1&card_type=group&uin=${AFTER_SALES_QQ_GROUP_NUMBER}&source=qrcode`
+const REDEEM_CODE_PURCHASE_URL = 'https://pay.ldxp.cn/shop/CZYP4OG5'
 
 const code = ref('')
 const resolving = ref(false)
@@ -513,6 +534,26 @@ function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+}
+
+function openAfterSalesGroup() {
+  try {
+    window.open(AFTER_SALES_QQ_GROUP_DEEPLINK, '_self')
+    window.setTimeout(() => {
+      if (document.hasFocus()) {
+        appStore.showInfo(`如果没有自动拉起 QQ，请手动搜索群 ${AFTER_SALES_QQ_GROUP_NUMBER}`)
+      }
+    }, 100)
+  } catch (error) {
+    appStore.showInfo(`请手动搜索 QQ 群 ${AFTER_SALES_QQ_GROUP_NUMBER}`)
+  }
+}
+
+function openRedeemCodePurchase() {
+  const opened = window.open(REDEEM_CODE_PURCHASE_URL, '_blank', 'noopener,noreferrer')
+  if (!opened) {
+    window.location.href = REDEEM_CODE_PURCHASE_URL
+  }
 }
 
 function executeCcsImport(clientType: 'claude' | 'gemini') {
