@@ -3,6 +3,7 @@ package dto
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -169,6 +170,46 @@ func APIKeyExchangeQuotaRedeemResponseFromService(result *service.APIKeyExchange
 		Amount:     result.Amount,
 		RedeemCode: result.RedeemCode,
 		Result:     APIKeyExchangeResolveResponseFromService(result.Exchange),
+	}
+}
+
+func APIKeyExchangeUsageLogFromService(log *service.UsageLog) *APIKeyExchangeUsageLog {
+	if log == nil {
+		return nil
+	}
+
+	model := log.RequestedModel
+	if strings.TrimSpace(model) == "" {
+		model = log.Model
+	}
+
+	endpoint := ""
+	if log.InboundEndpoint != nil {
+		endpoint = strings.TrimSpace(*log.InboundEndpoint)
+	}
+	if endpoint == "" && log.UpstreamEndpoint != nil {
+		endpoint = strings.TrimSpace(*log.UpstreamEndpoint)
+	}
+
+	groupName := ""
+	if log.Group != nil {
+		groupName = log.Group.Name
+	}
+
+	durationMs := 0
+	if log.DurationMs != nil {
+		durationMs = *log.DurationMs
+	}
+
+	return &APIKeyExchangeUsageLog{
+		Model:       model,
+		Endpoint:    endpoint,
+		GroupName:   groupName,
+		RequestType: log.EffectiveRequestType().String(),
+		Tokens:      log.TotalTokens(),
+		ActualCost:  log.ActualCost,
+		DurationMs:  durationMs,
+		CreatedAt:   log.CreatedAt,
 	}
 }
 

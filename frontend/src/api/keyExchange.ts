@@ -1,9 +1,11 @@
 import { publicApiClient } from './client'
 import type {
+  APIKeyExchangeUsageLog,
   APIKeyExchangeQuotaRedeemRequest,
   APIKeyExchangeQuotaRedeemResponse,
   APIKeyExchangeResolveRequest,
-  APIKeyExchangeResolveResponse
+  APIKeyExchangeResolveResponse,
+  PaginatedResponse
 } from '@/types'
 
 export async function resolve(code: string, timezone?: string): Promise<APIKeyExchangeResolveResponse> {
@@ -33,9 +35,23 @@ export async function redeemQuota(
   return data
 }
 
+export async function listUsageLogs(
+  code: string,
+  page: number = 1,
+  pageSize: number = 10
+): Promise<PaginatedResponse<APIKeyExchangeUsageLog>> {
+  const { data } = await publicApiClient.post<PaginatedResponse<APIKeyExchangeUsageLog>>('/key-exchange/usage-logs', {
+    code,
+    page,
+    page_size: pageSize
+  })
+  return data
+}
+
 export const keyExchangeAPI = {
   resolve,
-  redeemQuota
+  redeemQuota,
+  listUsageLogs
 }
 
 export default keyExchangeAPI

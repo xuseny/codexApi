@@ -111,6 +111,17 @@ type APIKeyExchangeQuotaRedeemResponse struct {
 	Result     *APIKeyExchangeResolveResponse `json:"result,omitempty"`
 }
 
+type APIKeyExchangeUsageLog struct {
+	Model       string    `json:"model"`
+	Endpoint    string    `json:"endpoint"`
+	GroupName   string    `json:"group_name"`
+	RequestType string    `json:"request_type"`
+	Tokens      int       `json:"tokens"`
+	ActualCost  float64   `json:"actual_cost"`
+	DurationMs  int       `json:"duration_ms"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type Group struct {
 	ID             int64   `json:"id"`
 	Name           string  `json:"name"`

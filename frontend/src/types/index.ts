@@ -1174,6 +1174,17 @@ export interface APIKeyExchangeQuotaRedeemResponse {
   result?: APIKeyExchangeResolveResponse
 }
 
+export interface APIKeyExchangeUsageLog {
+  model: string
+  endpoint: string
+  group_name: string
+  request_type: UsageRequestType
+  tokens: number
+  actual_cost: number
+  duration_ms: number
+  created_at: string
+}
+
 // ==================== Dashboard & Statistics ====================
 
 export interface DashboardStats {

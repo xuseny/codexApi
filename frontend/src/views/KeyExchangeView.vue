@@ -131,9 +131,18 @@
           </div>
 
           <div class="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">
-              {{ t('keyExchange.usageTitle') }}
-            </h2>
+            <div class="flex items-start justify-between gap-3">
+              <h2 class="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-dark-400">
+                {{ t('keyExchange.usageTitle') }}
+              </h2>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-xl border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition hover:bg-primary-100 dark:border-primary-900/60 dark:bg-primary-900/20 dark:text-primary-300"
+                @click="openUsageDetailsDialog"
+              >
+                {{ t('keyExchange.viewUsageDetails') }}
+              </button>
+            </div>
             <div class="mt-4 space-y-3">
               <div class="flex items-center justify-between text-sm">
                 <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.todayCost') }}</span>
@@ -426,21 +435,105 @@
         </div>
       </template>
     </BaseDialog>
+
+    <BaseDialog
+      :show="showUsageDetailsDialog"
+      :title="t('keyExchange.usageDetailsTitle')"
+      width="extra-wide"
+      @close="closeUsageDetailsDialog"
+    >
+      <div class="space-y-4">
+        <div class="rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-600 dark:bg-dark-950/60 dark:text-dark-300">
+          <span class="font-medium text-gray-900 dark:text-white">{{ t('keyExchange.apiKeyLabel') }}:</span>
+          <code class="ml-2 break-all rounded bg-white px-2 py-1 text-xs text-gray-800 dark:bg-dark-800 dark:text-dark-100">
+            {{ result?.api_key || '-' }}
+          </code>
+        </div>
+
+        <DataTable :columns="usageDetailsColumns" :data="usageDetails" :loading="usageDetailsLoading">
+          <template #cell-model="{ value }">
+            <span class="font-medium text-gray-900 dark:text-white">{{ value || '-' }}</span>
+          </template>
+
+          <template #cell-endpoint="{ value }">
+            <span class="block max-w-[280px] whitespace-normal break-all text-sm text-gray-600 dark:text-gray-300">
+              {{ value || '-' }}
+            </span>
+          </template>
+
+          <template #cell-group_name="{ value }">
+            <span class="text-sm text-gray-600 dark:text-gray-300">{{ value || '-' }}</span>
+          </template>
+
+          <template #cell-request_type="{ row }">
+            <span
+              class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium"
+              :class="getUsageDetailsRequestTypeBadgeClass(row)"
+            >
+              {{ getUsageDetailsRequestTypeLabel(row) }}
+            </span>
+          </template>
+
+          <template #cell-tokens="{ value }">
+            <span class="text-sm text-gray-900 dark:text-white">{{ formatUsageDetailsTokens(value) }}</span>
+          </template>
+
+          <template #cell-actual_cost="{ value }">
+            <span class="text-sm font-medium text-green-600 dark:text-green-400">${{ Number(value || 0).toFixed(6) }}</span>
+          </template>
+
+          <template #cell-duration_ms="{ value }">
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatUsageDetailsDuration(Number(value || 0)) }}</span>
+          </template>
+
+          <template #cell-created_at="{ value }">
+            <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
+          </template>
+
+          <template #empty>
+            <EmptyState :title="t('keyExchange.usageDetailsEmpty')" />
+          </template>
+        </DataTable>
+
+        <Pagination
+          v-if="usageDetailsPagination.total > 0"
+          :page="usageDetailsPagination.page"
+          :total="usageDetailsPagination.total"
+          :page-size="usageDetailsPagination.page_size"
+          :page-size-options="[10, 20, 50]"
+          @update:page="handleUsageDetailsPageChange"
+          @update:pageSize="handleUsageDetailsPageSizeChange"
+        />
+      </div>
+
+      <template #footer>
+        <div class="flex justify-end">
+          <button type="button" class="btn btn-secondary" @click="closeUsageDetailsDialog">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import DataTable from '@/components/common/DataTable.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { keyExchangeAPI } from '@/api'
+import type { Column } from '@/components/common/types'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores/app'
 import { formatDateTime } from '@/utils/format'
 import { buildKeyExchangeConfigPresets, type KeyExchangeConfigFile } from '@/utils/keyExchangeConfig'
-import type { APIKeyExchangeResolveResponse } from '@/types'
+import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import type { APIKeyExchangeResolveResponse, APIKeyExchangeUsageLog } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -456,6 +549,16 @@ const redeemingQuota = ref(false)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const selectedPresetId = ref<string>('')
 const showCcsClientSelect = ref(false)
+const showUsageDetailsDialog = ref(false)
+const usageDetailsLoading = ref(false)
+const usageDetails = ref<APIKeyExchangeUsageLog[]>([])
+const usageDetailsPagination = reactive({
+  page: 1,
+  page_size: 10,
+  total: 0,
+  pages: 0
+})
+let usageDetailsRequestId = 0
 
 const siteName = computed(() => appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => appStore.siteLogo)
@@ -522,11 +625,60 @@ const quotaRechargeUnavailableReason = computed(() => {
   return t('keyExchange.quotaRechargeUnavailable')
 })
 
+const usageDetailsColumns = computed<Column[]>(() => [
+  { key: 'model', label: t('usage.model') },
+  { key: 'endpoint', label: t('usage.endpoint') },
+  { key: 'group_name', label: t('keyExchange.group') },
+  { key: 'request_type', label: t('usage.type') },
+  { key: 'tokens', label: t('usage.tokens') },
+  { key: 'actual_cost', label: t('usage.cost') },
+  { key: 'duration_ms', label: t('usage.duration') },
+  { key: 'created_at', label: t('usage.time') }
+])
+
+const currentExchangeCode = computed(() => {
+  return (result.value?.code || code.value || '').trim().toUpperCase()
+})
+
 function quotaLabel(quota: number): string {
   if (quota <= 0) {
     return t('keyExchange.unlimited')
   }
   return `$${quota.toFixed(4)}`
+}
+
+function formatUsageDetailsDuration(ms: number): string {
+  if (ms <= 0) return '-'
+  if (ms < 1000) return `${ms.toFixed(0)}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+function formatUsageDetailsTokens(tokens: number): string {
+  return Number(tokens || 0).toLocaleString()
+}
+
+function getUsageDetailsRequestTypeLabel(row: APIKeyExchangeUsageLog): string {
+  const requestType = resolveUsageRequestType(row)
+  if (requestType === 'ws_v2') return t('usage.ws')
+  if (requestType === 'stream') return t('usage.stream')
+  if (requestType === 'sync') return t('usage.sync')
+  return t('usage.unknown')
+}
+
+function getUsageDetailsRequestTypeBadgeClass(row: APIKeyExchangeUsageLog): string {
+  const requestType = resolveUsageRequestType(row)
+  if (requestType === 'ws_v2') return 'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200'
+  if (requestType === 'stream') return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+  if (requestType === 'sync') return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+  return 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+}
+
+function resetUsageDetailsState() {
+  usageDetails.value = []
+  usageDetailsPagination.page = 1
+  usageDetailsPagination.page_size = 10
+  usageDetailsPagination.total = 0
+  usageDetailsPagination.pages = 0
 }
 
 function toggleTheme() {
@@ -638,6 +790,65 @@ function handleCcsClientSelect(clientType: 'claude' | 'gemini') {
 
 function closeCcsClientSelect() {
   showCcsClientSelect.value = false
+}
+
+async function loadUsageDetails() {
+  const exchangeCode = currentExchangeCode.value
+  if (!exchangeCode) {
+    usageDetails.value = []
+    usageDetailsPagination.total = 0
+    return
+  }
+
+  const requestId = ++usageDetailsRequestId
+  usageDetailsLoading.value = true
+
+  try {
+    const response = await keyExchangeAPI.listUsageLogs(
+      exchangeCode,
+      usageDetailsPagination.page,
+      usageDetailsPagination.page_size
+    )
+    if (requestId !== usageDetailsRequestId) {
+      return
+    }
+
+    usageDetails.value = response.items || []
+    usageDetailsPagination.total = response.total
+    usageDetailsPagination.pages = response.pages
+    usageDetailsPagination.page = response.page
+    usageDetailsPagination.page_size = response.page_size
+  } catch (error: any) {
+    if (requestId !== usageDetailsRequestId) {
+      return
+    }
+    appStore.showError(error?.response?.data?.detail || error?.message || t('keyExchange.usageDetailsFailed'))
+  } finally {
+    if (requestId === usageDetailsRequestId) {
+      usageDetailsLoading.value = false
+    }
+  }
+}
+
+function openUsageDetailsDialog() {
+  usageDetailsPagination.page = 1
+  showUsageDetailsDialog.value = true
+  void loadUsageDetails()
+}
+
+function closeUsageDetailsDialog() {
+  showUsageDetailsDialog.value = false
+}
+
+function handleUsageDetailsPageChange(page: number) {
+  usageDetailsPagination.page = page
+  void loadUsageDetails()
+}
+
+function handleUsageDetailsPageSizeChange(pageSize: number) {
+  usageDetailsPagination.page_size = pageSize
+  usageDetailsPagination.page = 1
+  void loadUsageDetails()
 }
 
 function downloadConfigFile(file: KeyExchangeConfigFile) {
@@ -752,6 +963,12 @@ async function handleRedeemQuota() {
 watch(configPresets, (value) => {
   selectedPresetId.value = value[0]?.id || ''
 }, { immediate: true })
+
+watch(() => result.value?.code, () => {
+  showUsageDetailsDialog.value = false
+  usageDetailsRequestId++
+  resetUsageDetailsState()
+})
 
 onMounted(() => {
   if (!appStore.publicSettingsLoaded) {

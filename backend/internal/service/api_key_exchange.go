@@ -246,6 +246,29 @@ func (s *APIKeyExchangeService) BatchDeleteCodes(ctx context.Context, ids []int6
 	return deleted, nil
 }
 
+func (s *APIKeyExchangeService) GetUsageLogAPIKeyIDByCode(ctx context.Context, code string) (int64, error) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return 0, infraerrors.BadRequest("API_KEY_EXCHANGE_CODE_REQUIRED", "code is required")
+	}
+
+	record, err := s.repo.GetByCode(ctx, code)
+	if err != nil {
+		return 0, err
+	}
+	if record.Status == APIKeyExchangeStatusDisabled {
+		return 0, ErrAPIKeyExchangeCodeDisabled
+	}
+	if record.APIKeyID == nil {
+		if record.Status == APIKeyExchangeStatusUnused {
+			return 0, ErrAPIKeyExchangeCodeNotActivated
+		}
+		return 0, ErrAPIKeyExchangeOrphanedAPIKey
+	}
+
+	return *record.APIKeyID, nil
+}
+
 func (s *APIKeyExchangeService) KickOffline(ctx context.Context, code string) (*APIKeyExchangeKickOfflineResult, error) {
 	if s == nil || s.apiKeyService == nil {
 		return nil, infraerrors.InternalServer("API_KEY_DEVICE_LOCK_NOT_CONFIGURED", "api key device lock service not configured")

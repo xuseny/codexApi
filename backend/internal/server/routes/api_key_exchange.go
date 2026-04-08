@@ -12,5 +12,6 @@ func RegisterAPIKeyExchangeRoutes(v1 *gin.RouterGroup, h *handler.Handlers) {
 	{
 		keyExchange.POST("/resolve", h.Setting.ResolveAPIKeyExchange)
 		keyExchange.POST("/redeem-quota", h.Setting.RedeemAPIKeyExchangeQuota)
+		keyExchange.POST("/usage-logs", h.Setting.ListAPIKeyExchangeUsageLogs)
 	}
 }
