@@ -76,6 +76,7 @@ type GenerateAPIKeyExchangeCodesInput struct {
 
 type APIKeyExchangeUsageSummary struct {
 	TotalRequests   int64
+	TodayTokens     int64
 	TodayActualCost float64
 	TotalActualCost float64
 }
@@ -92,6 +93,7 @@ type APIKeyExchangeResolveResult struct {
 	Quota           float64
 	QuotaUsed       float64
 	ExpiresAt       *time.Time
+	TodayTokens     int64
 	TodayActualCost float64
 	TotalActualCost float64
 	TotalRequests   int64
@@ -397,6 +399,7 @@ func (s *APIKeyExchangeService) buildResolveResult(ctx context.Context, record *
 		Quota:           record.APIKey.Quota,
 		QuotaUsed:       record.APIKey.QuotaUsed,
 		ExpiresAt:       record.APIKey.ExpiresAt,
+		TodayTokens:     summary.TodayTokens,
 		TodayActualCost: summary.TodayActualCost,
 		TotalActualCost: summary.TotalActualCost,
 		TotalRequests:   summary.TotalRequests,

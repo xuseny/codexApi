@@ -1162,6 +1162,7 @@ export interface APIKeyExchangeResolveResponse {
   quota: number
   quota_used: number
   expires_at: string | null
+  today_tokens: number
   today_actual_cost: number
   total_actual_cost: number
   total_requests: number
@@ -1180,6 +1181,7 @@ export interface APIKeyExchangeUsageLog {
   group_name: string
   request_type: UsageRequestType
   tokens: number
+  first_token_ms: number | null
   actual_cost: number
   duration_ms: number
   created_at: string

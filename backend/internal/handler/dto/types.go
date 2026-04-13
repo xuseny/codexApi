@@ -98,6 +98,7 @@ type APIKeyExchangeResolveResponse struct {
 	Quota           float64    `json:"quota"`
 	QuotaUsed       float64    `json:"quota_used"`
 	ExpiresAt       *time.Time `json:"expires_at"`
+	TodayTokens     int64      `json:"today_tokens"`
 	TodayActualCost float64    `json:"today_actual_cost"`
 	TotalActualCost float64    `json:"total_actual_cost"`
 	TotalRequests   int64      `json:"total_requests"`
@@ -117,6 +118,7 @@ type APIKeyExchangeUsageLog struct {
 	GroupName   string    `json:"group_name"`
 	RequestType string    `json:"request_type"`
 	Tokens      int       `json:"tokens"`
+	FirstTokenMs *int     `json:"first_token_ms"`
 	ActualCost  float64   `json:"actual_cost"`
 	DurationMs  int       `json:"duration_ms"`
 	CreatedAt   time.Time `json:"created_at"`

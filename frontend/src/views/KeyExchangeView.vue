@@ -149,6 +149,10 @@
                 <span class="font-medium">${{ result.today_actual_cost.toFixed(4) }}</span>
               </div>
               <div class="flex items-center justify-between text-sm">
+                <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.todayTokens') }}</span>
+                <span class="font-medium">{{ formatUsageDetailsTokens(result.today_tokens) }}</span>
+              </div>
+              <div class="flex items-center justify-between text-sm">
                 <span class="text-gray-500 dark:text-dark-400">{{ t('keyExchange.totalCost') }}</span>
                 <span class="font-medium">${{ result.total_actual_cost.toFixed(4) }}</span>
               </div>
@@ -478,6 +482,13 @@
             <span class="text-sm text-gray-900 dark:text-white">{{ formatUsageDetailsTokens(value) }}</span>
           </template>
 
+          <template #cell-first_token_ms="{ value }">
+            <span v-if="value != null" class="text-sm text-gray-600 dark:text-gray-400">
+              {{ formatUsageDetailsDuration(Number(value)) }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          </template>
+
           <template #cell-actual_cost="{ value }">
             <span class="text-sm font-medium text-green-600 dark:text-green-400">${{ Number(value || 0).toFixed(6) }}</span>
           </template>
@@ -631,6 +642,7 @@ const usageDetailsColumns = computed<Column[]>(() => [
   { key: 'group_name', label: t('keyExchange.group') },
   { key: 'request_type', label: t('usage.type') },
   { key: 'tokens', label: t('usage.tokens') },
+  { key: 'first_token_ms', label: t('keyExchange.firstToken') },
   { key: 'actual_cost', label: t('usage.cost') },
   { key: 'duration_ms', label: t('usage.duration') },
   { key: 'created_at', label: t('usage.time') }

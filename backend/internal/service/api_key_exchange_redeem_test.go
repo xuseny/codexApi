@@ -150,6 +150,7 @@ func TestAPIKeyExchangeService_RedeemQuota_Success(t *testing.T) {
 		amount: 8.5,
 		summary: &APIKeyExchangeUsageSummary{
 			TotalRequests:   5,
+			TodayTokens:     4096,
 			TodayActualCost: 1.25,
 			TotalActualCost: 9.75,
 		},
@@ -166,6 +167,7 @@ func TestAPIKeyExchangeService_RedeemQuota_Success(t *testing.T) {
 	require.Equal(t, apiKeyID, result.Exchange.APIKeyID)
 	require.Equal(t, 25.0, result.Exchange.Quota)
 	require.Equal(t, 12.0, result.Exchange.QuotaUsed)
+	require.Equal(t, int64(4096), result.Exchange.TodayTokens)
 	require.Equal(t, int64(5), result.Exchange.TotalRequests)
 	require.Len(t, cache.deletedAuthCache, 1)
 }

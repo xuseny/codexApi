@@ -155,6 +155,7 @@ func APIKeyExchangeResolveResponseFromService(result *service.APIKeyExchangeReso
 		Quota:           result.Quota,
 		QuotaUsed:       result.QuotaUsed,
 		ExpiresAt:       result.ExpiresAt,
+		TodayTokens:     result.TodayTokens,
 		TodayActualCost: result.TodayActualCost,
 		TotalActualCost: result.TotalActualCost,
 		TotalRequests:   result.TotalRequests,
@@ -202,14 +203,15 @@ func APIKeyExchangeUsageLogFromService(log *service.UsageLog) *APIKeyExchangeUsa
 	}
 
 	return &APIKeyExchangeUsageLog{
-		Model:       model,
-		Endpoint:    endpoint,
-		GroupName:   groupName,
-		RequestType: log.EffectiveRequestType().String(),
-		Tokens:      log.TotalTokens(),
-		ActualCost:  log.ActualCost,
-		DurationMs:  durationMs,
-		CreatedAt:   log.CreatedAt,
+		Model:        model,
+		Endpoint:     endpoint,
+		GroupName:    groupName,
+		RequestType:  log.EffectiveRequestType().String(),
+		Tokens:       log.TotalTokens(),
+		FirstTokenMs: log.FirstTokenMs,
+		ActualCost:   log.ActualCost,
+		DurationMs:   durationMs,
+		CreatedAt:    log.CreatedAt,
 	}
 }
 

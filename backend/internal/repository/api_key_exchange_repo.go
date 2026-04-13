@@ -417,12 +417,13 @@ func (r *apiKeyExchangeRepository) GetUsageSummary(ctx context.Context, apiKeyID
 	query := `
 		SELECT
 			(SELECT COUNT(*) FROM usage_logs WHERE api_key_id = $1) AS total_requests,
+			(SELECT COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) FROM usage_logs WHERE api_key_id = $1 AND created_at >= $2 AND created_at < $3) AS today_tokens,
 			(SELECT COALESCE(SUM(actual_cost), 0) FROM usage_logs WHERE api_key_id = $1 AND created_at >= $2 AND created_at < $3) AS today_actual_cost,
 			(SELECT COALESCE(SUM(actual_cost), 0) FROM usage_logs WHERE api_key_id = $1) AS total_actual_cost
 	`
 
 	var summary service.APIKeyExchangeUsageSummary
-	if err := scanSingleRow(ctx, r.db, query, []any{apiKeyID, todayStart, end}, &summary.TotalRequests, &summary.TodayActualCost, &summary.TotalActualCost); err != nil {
+	if err := scanSingleRow(ctx, r.db, query, []any{apiKeyID, todayStart, end}, &summary.TotalRequests, &summary.TodayTokens, &summary.TodayActualCost, &summary.TotalActualCost); err != nil {
 		return nil, err
 	}
 	return &summary, nil
