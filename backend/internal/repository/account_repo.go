@@ -1553,6 +1553,9 @@ func (r *accountRepository) loadAccountGroups(ctx context.Context, accountIDs []
 	}
 
 	for _, ag := range entries {
+		if ag.Edges.Group == nil || ag.Edges.Group.DeletedAt != nil {
+			continue
+		}
 		groupSvc := groupEntityToService(ag.Edges.Group)
 		agSvc := service.AccountGroup{
 			AccountID: ag.AccountID,
@@ -1575,12 +1578,16 @@ func (r *accountRepository) loadAccountGroupIDs(ctx context.Context, accountID i
 	entries, err := r.client.AccountGroup.
 		Query().
 		Where(dbaccountgroup.AccountIDEQ(accountID)).
+		WithGroup().
 		All(ctx)
 	if err != nil {
 		return nil, err
 	}
 	ids := make([]int64, 0, len(entries))
 	for _, entry := range entries {
+		if entry.Edges.Group == nil || entry.Edges.Group.DeletedAt != nil {
+			continue
+		}
 		ids = append(ids, entry.GroupID)
 	}
 	return ids, nil

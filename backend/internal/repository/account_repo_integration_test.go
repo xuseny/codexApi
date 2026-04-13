@@ -9,6 +9,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/suite"
@@ -431,6 +432,29 @@ func (s *AccountRepoSuite) TestBindGroups_EmptyList() {
 	groups, err := s.repo.GetGroups(s.ctx, account.ID)
 	s.Require().NoError(err)
 	s.Require().Empty(groups, "expected 0 groups after binding empty list")
+}
+
+func (s *AccountRepoSuite) TestGetByID_IgnoresSoftDeletedGroupBindings() {
+	grp := mustCreateGroup(s.T(), s.client, &service.Group{Name: "g-soft-deleted"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-soft-group"})
+	mustBindAccountToGroup(s.T(), s.client, account.ID, grp.ID, 1)
+
+	_, err := s.client.Group.Delete().Where(group.IDEQ(grp.ID)).Exec(s.ctx)
+	s.Require().NoError(err, "soft delete group")
+
+	got, err := s.repo.GetByID(s.ctx, account.ID)
+	s.Require().NoError(err, "GetByID")
+	s.Require().Empty(got.GroupIDs, "soft deleted group should not be exposed in GroupIDs")
+	s.Require().Empty(got.Groups, "soft deleted group should not be exposed in Groups")
+	s.Require().Empty(got.AccountGroups, "soft deleted group should not be exposed in AccountGroups")
+
+	list, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "", "acc-soft-group", 0, "")
+	s.Require().NoError(err, "ListWithFilters")
+	s.Require().Equal(int64(1), page.Total)
+	s.Require().Len(list, 1)
+	s.Require().Empty(list[0].GroupIDs, "soft deleted group should not be exposed in list GroupIDs")
+	s.Require().Empty(list[0].Groups, "soft deleted group should not be exposed in list Groups")
+	s.Require().Empty(list[0].AccountGroups, "soft deleted group should not be exposed in list AccountGroups")
 }
 
 // --- Schedulable ---
