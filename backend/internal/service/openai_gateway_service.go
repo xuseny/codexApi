@@ -3110,6 +3110,20 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		}
 	}
 
+	if msg, ok := DefaultUpstreamPassthroughMessage(resp.StatusCode, body); ok {
+		errType := "upstream_error"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			errType = "rate_limit_error"
+		}
+		c.JSON(resp.StatusCode, gin.H{
+			"error": gin.H{
+				"type":    errType,
+				"message": msg,
+			},
+		})
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, msg)
+	}
+
 	// Return appropriate error response
 	var errType, errMsg string
 	var statusCode int

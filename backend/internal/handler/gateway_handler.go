@@ -1250,6 +1250,18 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
+	if msg, ok := service.DefaultUpstreamPassthroughMessage(statusCode, responseBody); ok {
+		errType := "upstream_error"
+		switch statusCode {
+		case http.StatusTooManyRequests:
+			errType = "rate_limit_error"
+		case 529:
+			errType = "overloaded_error"
+		}
+		h.handleStreamingAwareError(c, statusCode, errType, msg, streamStarted)
+		return
+	}
+
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)

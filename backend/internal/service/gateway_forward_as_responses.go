@@ -511,6 +511,9 @@ func writeResponsesError(c *gin.Context, statusCode int, code, message string) {
 
 // mapUpstreamStatusCode maps upstream HTTP status codes to appropriate client-facing codes.
 func mapUpstreamStatusCode(code int) int {
+	if ShouldPreserveUpstreamStatusByDefault(code) {
+		return code
+	}
 	if code >= 500 {
 		return http.StatusBadGateway
 	}

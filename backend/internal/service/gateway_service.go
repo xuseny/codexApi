@@ -6449,6 +6449,23 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, summary)
 	}
 
+	if msg, ok := DefaultUpstreamPassthroughMessage(resp.StatusCode, body); ok {
+		errType := "upstream_error"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			errType = "rate_limit_error"
+		} else if resp.StatusCode == 529 {
+			errType = "overloaded_error"
+		}
+		c.JSON(resp.StatusCode, gin.H{
+			"type": "error",
+			"error": gin.H{
+				"type":    errType,
+				"message": msg,
+			},
+		})
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, msg)
+	}
+
 	// 根据状态码返回适当的自定义错误响应（不透传上游详细信息）
 	var errType, errMsg string
 	var statusCode int
@@ -6605,6 +6622,23 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 			return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched)", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched) message=%s", resp.StatusCode, summary)
+	}
+
+	if msg, ok := DefaultUpstreamPassthroughMessage(resp.StatusCode, respBody); ok {
+		errType := "upstream_error"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			errType = "rate_limit_error"
+		} else if resp.StatusCode == 529 {
+			errType = "overloaded_error"
+		}
+		c.JSON(resp.StatusCode, gin.H{
+			"type": "error",
+			"error": gin.H{
+				"type":    errType,
+				"message": msg,
+			},
+		})
+		return nil, fmt.Errorf("upstream error: %d (retries exhausted) message=%s", resp.StatusCode, msg)
 	}
 
 	// 返回统一的重试耗尽错误响应
