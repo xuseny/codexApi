@@ -6,12 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/dgraph-io/ristretto"
 )
+
+const apiKeyAuthSnapshotVersion = 7 // v7: added UserGroupRPMOverride on user snapshot
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -97,7 +100,7 @@ func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context
 		s.authCacheL1.Del(cacheKey)
 	}); err != nil {
 		// Log but don't fail - L1 cache will still work, just without cross-instance invalidation
-		println("[Service] Warning: failed to start auth cache invalidation subscriber:", err.Error())
+		slog.Warn("failed to start auth cache invalidation subscriber", "error", err)
 	}
 }
 
@@ -173,7 +176,7 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
 	apiKey.Key = key
-	snapshot := s.snapshotFromAPIKey(apiKey)
+	snapshot := s.snapshotFromAPIKey(ctx, apiKey)
 	if snapshot == nil {
 		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
 	}
@@ -192,14 +195,18 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	if entry.Snapshot == nil {
 		return nil, false, nil
 	}
+	if entry.Snapshot.Version != apiKeyAuthSnapshotVersion {
+		return nil, false, nil
+	}
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
 }
 
-func (s *APIKeyService) snapshotFromAPIKey(apiKey *APIKey) *APIKeyAuthSnapshot {
+func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) *APIKeyAuthSnapshot {
 	if apiKey == nil || apiKey.User == nil {
 		return nil
 	}
 	snapshot := &APIKeyAuthSnapshot{
+		Version:     apiKeyAuthSnapshotVersion,
 		APIKeyID:    apiKey.ID,
 		UserID:      apiKey.UserID,
 		GroupID:     apiKey.GroupID,
@@ -213,12 +220,29 @@ func (s *APIKeyService) snapshotFromAPIKey(apiKey *APIKey) *APIKeyAuthSnapshot {
 		RateLimit1d: apiKey.RateLimit1d,
 		RateLimit7d: apiKey.RateLimit7d,
 		User: APIKeyAuthUserSnapshot{
-			ID:          apiKey.User.ID,
-			Status:      apiKey.User.Status,
-			Role:        apiKey.User.Role,
-			Balance:     apiKey.User.Balance,
-			Concurrency: apiKey.User.Concurrency,
+			ID:                         apiKey.User.ID,
+			Status:                     apiKey.User.Status,
+			Role:                       apiKey.User.Role,
+			Balance:                    apiKey.User.Balance,
+			Concurrency:                apiKey.User.Concurrency,
+			Email:                      apiKey.User.Email,
+			Username:                   apiKey.User.Username,
+			BalanceNotifyEnabled:       apiKey.User.BalanceNotifyEnabled,
+			BalanceNotifyThresholdType: apiKey.User.BalanceNotifyThresholdType,
+			BalanceNotifyThreshold:     apiKey.User.BalanceNotifyThreshold,
+			BalanceNotifyExtraEmails:   apiKey.User.BalanceNotifyExtraEmails,
+			TotalRecharged:             apiKey.User.TotalRecharged,
+			RPMLimit:                   apiKey.User.RPMLimit,
 		},
+	}
+
+	// 填充 (user, group) RPM override —— snapshot 构建时查一次 DB，后续请求零 DB 往返。
+	if apiKey.GroupID != nil && *apiKey.GroupID > 0 && s.userGroupRateRepo != nil {
+		override, err := s.userGroupRateRepo.GetRPMOverrideByUserAndGroup(ctx, apiKey.UserID, *apiKey.GroupID)
+		if err == nil && override != nil {
+			snapshot.User.UserGroupRPMOverride = override
+		}
+		// 查询失败或无 override 时留 nil，checkRPM 会回退到 DB 查询
 	}
 	if apiKey.Group != nil {
 		snapshot.Group = &APIKeyAuthGroupSnapshot{
@@ -234,10 +258,6 @@ func (s *APIKeyService) snapshotFromAPIKey(apiKey *APIKey) *APIKeyAuthSnapshot {
 			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
 			ImagePrice2K:                    apiKey.Group.ImagePrice2K,
 			ImagePrice4K:                    apiKey.Group.ImagePrice4K,
-			SoraImagePrice360:               apiKey.Group.SoraImagePrice360,
-			SoraImagePrice540:               apiKey.Group.SoraImagePrice540,
-			SoraVideoPricePerRequest:        apiKey.Group.SoraVideoPricePerRequest,
-			SoraVideoPricePerRequestHD:      apiKey.Group.SoraVideoPricePerRequestHD,
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
@@ -247,6 +267,8 @@ func (s *APIKeyService) snapshotFromAPIKey(apiKey *APIKey) *APIKeyAuthSnapshot {
 			SupportedModelScopes:            apiKey.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
+			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
+			RPMLimit:                        apiKey.Group.RPMLimit,
 		}
 	}
 	return snapshot
@@ -271,11 +293,20 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		RateLimit1d: snapshot.RateLimit1d,
 		RateLimit7d: snapshot.RateLimit7d,
 		User: &User{
-			ID:          snapshot.User.ID,
-			Status:      snapshot.User.Status,
-			Role:        snapshot.User.Role,
-			Balance:     snapshot.User.Balance,
-			Concurrency: snapshot.User.Concurrency,
+			ID:                         snapshot.User.ID,
+			Status:                     snapshot.User.Status,
+			Role:                       snapshot.User.Role,
+			Balance:                    snapshot.User.Balance,
+			Concurrency:                snapshot.User.Concurrency,
+			Email:                      snapshot.User.Email,
+			Username:                   snapshot.User.Username,
+			BalanceNotifyEnabled:       snapshot.User.BalanceNotifyEnabled,
+			BalanceNotifyThresholdType: snapshot.User.BalanceNotifyThresholdType,
+			BalanceNotifyThreshold:     snapshot.User.BalanceNotifyThreshold,
+			BalanceNotifyExtraEmails:   snapshot.User.BalanceNotifyExtraEmails,
+			TotalRecharged:             snapshot.User.TotalRecharged,
+			RPMLimit:                   snapshot.User.RPMLimit,
+			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
 		},
 	}
 	if snapshot.Group != nil {
@@ -293,10 +324,6 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
 			ImagePrice2K:                    snapshot.Group.ImagePrice2K,
 			ImagePrice4K:                    snapshot.Group.ImagePrice4K,
-			SoraImagePrice360:               snapshot.Group.SoraImagePrice360,
-			SoraImagePrice540:               snapshot.Group.SoraImagePrice540,
-			SoraVideoPricePerRequest:        snapshot.Group.SoraVideoPricePerRequest,
-			SoraVideoPricePerRequestHD:      snapshot.Group.SoraVideoPricePerRequestHD,
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
@@ -306,6 +333,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			SupportedModelScopes:            snapshot.Group.SupportedModelScopes,
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
+			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
+			RPMLimit:                        snapshot.Group.RPMLimit,
 		}
 	}
 	s.compileAPIKeyIPRules(apiKey)

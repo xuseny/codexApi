@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -121,6 +122,9 @@ func (a *Account) IsSchedulable() bool {
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
 		return false
 	}
+	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+		return false
+	}
 	return true
 }
 
@@ -140,6 +144,21 @@ func (a *Account) IsOverloaded() bool {
 
 func (a *Account) IsOAuth() bool {
 	return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken
+}
+
+// IsPrivacySet 检查账号的 privacy 是否已成功设置。
+// OpenAI: privacy_mode == "training_off"
+// Antigravity: privacy_mode == "privacy_set"
+// 其他平台: 无 privacy 概念，始终返回 true
+func (a *Account) IsPrivacySet() bool {
+	switch a.Platform {
+	case PlatformOpenAI:
+		return a.getExtraString("privacy_mode") == PrivacyModeTrainingOff
+	case PlatformAntigravity:
+		return a.getExtraString("privacy_mode") == AntigravityPrivacySet
+	default:
+		return true
+	}
 }
 
 func (a *Account) IsGemini() bool {
@@ -510,6 +529,45 @@ func ensureAntigravityDefaultPassthroughs(mapping map[string]string, models []st
 	}
 }
 
+func normalizeRequestedModelForLookup(platform, requestedModel string) string {
+	trimmed := strings.TrimSpace(requestedModel)
+	if trimmed == "" {
+		return ""
+	}
+	if platform != PlatformGemini && platform != PlatformAntigravity {
+		return trimmed
+	}
+	if trimmed == "gemini-3.1-pro-preview-customtools" {
+		return "gemini-3.1-pro-preview"
+	}
+	return trimmed
+}
+
+func mappingSupportsRequestedModel(mapping map[string]string, requestedModel string) bool {
+	if requestedModel == "" {
+		return false
+	}
+	if _, exists := mapping[requestedModel]; exists {
+		return true
+	}
+	for pattern := range mapping {
+		if matchWildcard(pattern, requestedModel) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveRequestedModelInMapping(mapping map[string]string, requestedModel string) (mappedModel string, matched bool) {
+	if requestedModel == "" {
+		return "", false
+	}
+	if mappedModel, exists := mapping[requestedModel]; exists {
+		return mappedModel, true
+	}
+	return matchWildcardMappingResult(mapping, requestedModel)
+}
+
 // IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
 // 如果未配置 mapping，返回 true（允许所有模型）
 func (a *Account) IsModelSupported(requestedModel string) bool {
@@ -517,17 +575,11 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if len(mapping) == 0 {
 		return true // 无映射 = 允许所有
 	}
-	// 精确匹配
-	if _, exists := mapping[requestedModel]; exists {
+	if mappingSupportsRequestedModel(mapping, requestedModel) {
 		return true
 	}
-	// 通配符匹配
-	for pattern := range mapping {
-		if matchWildcard(pattern, requestedModel) {
-			return true
-		}
-	}
-	return false
+	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
+	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
 }
 
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
@@ -544,12 +596,16 @@ func (a *Account) ResolveMappedModel(requestedModel string) (mappedModel string,
 	if len(mapping) == 0 {
 		return requestedModel, false
 	}
-	// 精确匹配优先
-	if mappedModel, exists := mapping[requestedModel]; exists {
+	if mappedModel, matched := resolveRequestedModelInMapping(mapping, requestedModel); matched {
 		return mappedModel, true
 	}
-	// 通配符匹配（最长优先）
-	return matchWildcardMappingResult(mapping, requestedModel)
+	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
+	if normalized != requestedModel {
+		if mappedModel, matched := resolveRequestedModelInMapping(mapping, normalized); matched {
+			return mappedModel, true
+		}
+	}
+	return requestedModel, false
 }
 
 func (a *Account) GetBaseURL() string {
@@ -871,6 +927,32 @@ func (a *Account) GetChatGPTAccountID() string {
 	return ""
 }
 
+func (a *Account) GetOpenAIDeviceID() string {
+	if !a.IsOpenAIOAuth() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetExtraString("openai_device_id"))
+}
+
+func (a *Account) GetOpenAISessionID() string {
+	if !a.IsOpenAIOAuth() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetExtraString("openai_session_id"))
+}
+
+func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if !a.IsOpenAI() {
+		return false
+	}
+	switch capability {
+	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
+		return a.Type == AccountTypeOAuth || a.Type == AccountTypeAPIKey
+	default:
+		return true
+	}
+}
+
 func (a *Account) GetChatGPTUserID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
@@ -970,7 +1052,7 @@ func (a *Account) IsOveragesEnabled() bool {
 	return false
 }
 
-// IsOpenAIPassthroughEnabled 返回 OpenAI 账号是否启用“自动透传（仅替换认证）”。
+// IsOpenAIPassthroughEnabled 返回 OpenAI 账号是否启用"自动透传（仅替换认证）"。
 //
 // 新字段：accounts.extra.openai_passthrough。
 // 兼容字段：accounts.extra.openai_oauth_passthrough（历史 OAuth 开关）。
@@ -1134,7 +1216,7 @@ func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) stri
 	return resolvedDefault
 }
 
-// IsOpenAIWSForceHTTPEnabled 返回账号级“强制 HTTP”开关。
+// IsOpenAIWSForceHTTPEnabled 返回账号级"强制 HTTP"开关。
 // 字段：accounts.extra.openai_ws_force_http。
 func (a *Account) IsOpenAIWSForceHTTPEnabled() bool {
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
@@ -1159,7 +1241,7 @@ func (a *Account) IsOpenAIOAuthPassthroughEnabled() bool {
 	return a != nil && a.IsOpenAIOAuth() && a.IsOpenAIPassthroughEnabled()
 }
 
-// IsAnthropicAPIKeyPassthroughEnabled 返回 Anthropic API Key 账号是否启用“自动透传（仅替换认证）”。
+// IsAnthropicAPIKeyPassthroughEnabled 返回 Anthropic API Key 账号是否启用"自动透传（仅替换认证）"。
 // 字段：accounts.extra.anthropic_passthrough。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
@@ -1170,7 +1252,42 @@ func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	return ok && enabled
 }
 
-// IsCodexCLIOnlyEnabled 返回 OpenAI OAuth 账号是否启用“仅允许 Codex 官方客户端”。
+// WebSearch 模拟三态常量
+const (
+	WebSearchModeDefault  = "default"  // 跟随渠道配置
+	WebSearchModeEnabled  = "enabled"  // 强制开启
+	WebSearchModeDisabled = "disabled" // 强制关闭
+)
+
+// GetWebSearchEmulationMode 返回账号的 WebSearch 模拟模式。
+// 三态：default（跟随渠道）/ enabled（强制开启）/ disabled（强制关闭）。
+// 兼容旧 bool 值：true→enabled, false→default（并记录 debug 日志）。
+func (a *Account) GetWebSearchEmulationMode() string {
+	if a == nil || a.Platform != PlatformAnthropic || a.Type != AccountTypeAPIKey || a.Extra == nil {
+		return WebSearchModeDefault
+	}
+	raw := a.Extra[featureKeyWebSearchEmulation]
+	// Tolerant: legacy bool values (pre-migration or stale writes)
+	if b, ok := raw.(bool); ok {
+		slog.Debug("legacy bool web_search_emulation value", "account_id", a.ID, "value", b)
+		if b {
+			return WebSearchModeEnabled
+		}
+		return WebSearchModeDefault
+	}
+	mode, ok := raw.(string)
+	if !ok {
+		return WebSearchModeDefault
+	}
+	switch mode {
+	case WebSearchModeEnabled, WebSearchModeDisabled:
+		return mode
+	default:
+		return WebSearchModeDefault
+	}
+}
+
+// IsCodexCLIOnlyEnabled 返回 OpenAI OAuth 账号是否启用"仅允许 Codex 官方客户端"。
 // 字段：accounts.extra.codex_cli_only。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsCodexCLIOnlyEnabled() bool {
@@ -1282,6 +1399,28 @@ func (a *Account) IsSessionIDMaskingEnabled() bool {
 	return false
 }
 
+// IsCustomBaseURLEnabled 检查是否启用自定义 base URL 中继转发
+// 仅适用于 Anthropic OAuth/SetupToken 类型账号
+func (a *Account) IsCustomBaseURLEnabled() bool {
+	if !a.IsAnthropicOAuthOrSetupToken() {
+		return false
+	}
+	if a.Extra == nil {
+		return false
+	}
+	if v, ok := a.Extra["custom_base_url_enabled"]; ok {
+		if enabled, ok := v.(bool); ok {
+			return enabled
+		}
+	}
+	return false
+}
+
+// GetCustomBaseURL 返回自定义中继服务的 base URL
+func (a *Account) GetCustomBaseURL() string {
+	return a.GetExtraString("custom_base_url")
+}
+
 // IsCacheTTLOverrideEnabled 检查是否启用缓存 TTL 强制替换
 // 仅适用于 Anthropic OAuth/SetupToken 类型账号
 // 启用后将所有 cache creation tokens 归入指定的 TTL 类型（5m 或 1h）
@@ -1374,6 +1513,19 @@ func (a *Account) getExtraTime(key string) time.Time {
 	return time.Time{}
 }
 
+// getExtraBool 从 Extra 中读取指定 key 的 bool 值
+func (a *Account) getExtraBool(key string) bool {
+	if a.Extra == nil {
+		return false
+	}
+	if v, ok := a.Extra[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 // getExtraString 从 Extra 中读取指定 key 的字符串值
 func (a *Account) getExtraString(key string) string {
 	if a.Extra == nil {
@@ -1385,6 +1537,14 @@ func (a *Account) getExtraString(key string) string {
 		}
 	}
 	return ""
+}
+
+// getExtraStringDefault 从 Extra 中读取指定 key 的字符串值，不存在时返回 defaultVal
+func (a *Account) getExtraStringDefault(key, defaultVal string) string {
+	if v := a.getExtraString(key); v != "" {
+		return v
+	}
+	return defaultVal
 }
 
 // getExtraInt 从 Extra 中读取指定 key 的 int 值
@@ -1441,6 +1601,62 @@ func (a *Account) GetQuotaResetTimezone() string {
 		return tz
 	}
 	return "UTC"
+}
+
+// --- Quota Notification Getters ---
+
+// QuotaNotifyConfig returns the notify configuration for a given quota dimension.
+// dim must be one of quotaDimDaily, quotaDimWeekly, quotaDimTotal.
+func (a *Account) QuotaNotifyConfig(dim string) (enabled bool, threshold float64, thresholdType string) {
+	enabled = a.getExtraBool("quota_notify_" + dim + "_enabled")
+	threshold = a.getExtraFloat64("quota_notify_" + dim + "_threshold")
+	thresholdType = a.getExtraStringDefault("quota_notify_"+dim+"_threshold_type", thresholdTypeFixed)
+	return
+}
+
+func (a *Account) GetQuotaNotifyDailyEnabled() bool {
+	e, _, _ := a.QuotaNotifyConfig(quotaDimDaily)
+	return e
+}
+
+func (a *Account) GetQuotaNotifyDailyThreshold() float64 {
+	_, t, _ := a.QuotaNotifyConfig(quotaDimDaily)
+	return t
+}
+
+func (a *Account) GetQuotaNotifyDailyThresholdType() string {
+	_, _, tt := a.QuotaNotifyConfig(quotaDimDaily)
+	return tt
+}
+
+func (a *Account) GetQuotaNotifyWeeklyEnabled() bool {
+	e, _, _ := a.QuotaNotifyConfig(quotaDimWeekly)
+	return e
+}
+
+func (a *Account) GetQuotaNotifyWeeklyThreshold() float64 {
+	_, t, _ := a.QuotaNotifyConfig(quotaDimWeekly)
+	return t
+}
+
+func (a *Account) GetQuotaNotifyWeeklyThresholdType() string {
+	_, _, tt := a.QuotaNotifyConfig(quotaDimWeekly)
+	return tt
+}
+
+func (a *Account) GetQuotaNotifyTotalEnabled() bool {
+	e, _, _ := a.QuotaNotifyConfig(quotaDimTotal)
+	return e
+}
+
+func (a *Account) GetQuotaNotifyTotalThreshold() float64 {
+	_, t, _ := a.QuotaNotifyConfig(quotaDimTotal)
+	return t
+}
+
+func (a *Account) GetQuotaNotifyTotalThresholdType() string {
+	_, _, tt := a.QuotaNotifyConfig(quotaDimTotal)
+	return tt
 }
 
 // nextFixedDailyReset 计算在 after 之后的下一个每日固定重置时间点
@@ -1758,22 +1974,47 @@ func (a *Account) GetRPMStrategy() string {
 }
 
 // GetRPMStickyBuffer 获取 RPM 粘性缓冲数量
-// tiered 模式下的黄区大小，默认为 base_rpm 的 20%（至少 1）
+// Cache-driven: buffer = concurrency + maxSessions（覆盖幽灵窗口 + 稳态会话需求）
+// floor = baseRPM / 5（向后兼容 maxSessions=0 且 concurrency=0 场景）
 func (a *Account) GetRPMStickyBuffer() int {
 	if a.Extra == nil {
 		return 0
 	}
+
+	// 手动 override 最高优先级
 	if v, ok := a.Extra["rpm_sticky_buffer"]; ok {
 		val := parseExtraInt(v)
 		if val > 0 {
 			return val
 		}
 	}
+
 	base := a.GetBaseRPM()
-	buffer := base / 5
-	if buffer < 1 && base > 0 {
-		buffer = 1
+	if base <= 0 {
+		return 0
 	}
+
+	// Cache-driven buffer = concurrency + maxSessions
+	conc := a.Concurrency
+	if conc < 0 {
+		conc = 0
+	}
+	sess := a.GetMaxSessions()
+	if sess < 0 {
+		sess = 0
+	}
+
+	buffer := conc + sess
+
+	// floor: 向后兼容
+	floor := base / 5
+	if floor < 1 {
+		floor = 1
+	}
+	if buffer < floor {
+		buffer = floor
+	}
+
 	return buffer
 }
 

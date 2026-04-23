@@ -25,13 +25,16 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		{"/v1/messages", EndpointMessages},
 		{"/v1/chat/completions", EndpointChatCompletions},
 		{"/v1/responses", EndpointResponses},
+		{"/v1/images/generations", EndpointImagesGenerations},
+		{"/v1/images/edits", EndpointImagesEdits},
 		{"/v1beta/models", EndpointGeminiModels},
 
-		// Prefixed paths (antigravity, openai, sora).
+		// Prefixed paths (antigravity, openai).
 		{"/antigravity/v1/messages", EndpointMessages},
 		{"/openai/v1/responses", EndpointResponses},
 		{"/openai/v1/responses/compact", EndpointResponses},
-		{"/sora/v1/chat/completions", EndpointChatCompletions},
+		{"/openai/v1/images/generations", EndpointImagesGenerations},
+		{"/openai/v1/images/edits", EndpointImagesEdits},
 		{"/antigravity/v1beta/models/gemini:generateContent", EndpointGeminiModels},
 
 		// Gin route patterns with wildcards.
@@ -68,15 +71,14 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 		// Gemini.
 		{"gemini models", EndpointGeminiModels, "/v1beta/models/gemini:gen", service.PlatformGemini, EndpointGeminiModels},
 
-		// Sora.
-		{"sora completions", EndpointChatCompletions, "/sora/v1/chat/completions", service.PlatformSora, EndpointChatCompletions},
-
 		// OpenAI — always /v1/responses.
 		{"openai responses root", EndpointResponses, "/v1/responses", service.PlatformOpenAI, EndpointResponses},
 		{"openai responses compact", EndpointResponses, "/openai/v1/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
 		{"openai responses nested", EndpointResponses, "/openai/v1/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
 		{"openai from messages", EndpointMessages, "/v1/messages", service.PlatformOpenAI, EndpointResponses},
 		{"openai from completions", EndpointChatCompletions, "/v1/chat/completions", service.PlatformOpenAI, EndpointResponses},
+		{"openai image generations", EndpointImagesGenerations, "/v1/images/generations", service.PlatformOpenAI, EndpointImagesGenerations},
+		{"openai image edits", EndpointImagesEdits, "/openai/v1/images/edits", service.PlatformOpenAI, EndpointImagesEdits},
 
 		// Antigravity — uses inbound to pick Claude vs Gemini upstream.
 		{"antigravity claude", EndpointMessages, "/antigravity/v1/messages", service.PlatformAntigravity, EndpointMessages},

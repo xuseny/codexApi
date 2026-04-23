@@ -93,6 +93,30 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.ChatCompletions(c)
 		})
+		gateway.POST("/images/generations", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformOpenAI {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Images API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.Images(c)
+		})
+		gateway.POST("/images/edits", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformOpenAI {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Images API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.Images(c)
+		})
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -129,8 +153,55 @@ func RegisterGatewayRoutes(
 		}
 		h.Gateway.ChatCompletions(c)
 	})
+	r.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Images API is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.Images(c)
+	})
+	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Images API is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.Images(c)
+	})
 
 	// Antigravity 模型列表
+	// Sora 专用路由（强制使用 sora 平台）
+	soraV1 := r.Group("/sora/v1")
+	soraV1.Use(soraBodyLimit)
+	soraV1.Use(clientRequestID)
+	soraV1.Use(opsErrorLogger)
+	soraV1.Use(endpointNorm)
+	soraV1.Use(middleware.ForcePlatform(service.PlatformSora))
+	soraV1.Use(gin.HandlerFunc(apiKeyAuth))
+	soraV1.Use(requireGroupAnthropic)
+	{
+		soraV1.POST("/chat/completions", h.SoraGateway.ChatCompletions)
+		soraV1.GET("/models", h.Gateway.Models)
+	}
+
+	// Sora 媒体代理（可选 API Key 验证）
+	if cfg.Gateway.SoraMediaRequireAPIKey {
+		r.GET("/sora/media/*filepath", gin.HandlerFunc(apiKeyAuth), h.SoraGateway.MediaProxy)
+	} else {
+		r.GET("/sora/media/*filepath", h.SoraGateway.MediaProxy)
+	}
+	// Sora 媒体代理（签名 URL，无需 API Key）
+	r.GET("/sora/media-signed/*filepath", h.SoraGateway.MediaProxySigned)
+
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
@@ -163,28 +234,6 @@ func RegisterGatewayRoutes(
 		antigravityV1Beta.POST("/models/*modelAction", h.Gateway.GeminiV1BetaModels)
 	}
 
-	// Sora 专用路由（强制使用 sora 平台）
-	soraV1 := r.Group("/sora/v1")
-	soraV1.Use(soraBodyLimit)
-	soraV1.Use(clientRequestID)
-	soraV1.Use(opsErrorLogger)
-	soraV1.Use(endpointNorm)
-	soraV1.Use(middleware.ForcePlatform(service.PlatformSora))
-	soraV1.Use(gin.HandlerFunc(apiKeyAuth))
-	soraV1.Use(requireGroupAnthropic)
-	{
-		soraV1.POST("/chat/completions", h.SoraGateway.ChatCompletions)
-		soraV1.GET("/models", h.Gateway.Models)
-	}
-
-	// Sora 媒体代理（可选 API Key 验证）
-	if cfg.Gateway.SoraMediaRequireAPIKey {
-		r.GET("/sora/media/*filepath", gin.HandlerFunc(apiKeyAuth), h.SoraGateway.MediaProxy)
-	} else {
-		r.GET("/sora/media/*filepath", h.SoraGateway.MediaProxy)
-	}
-	// Sora 媒体代理（签名 URL，无需 API Key）
-	r.GET("/sora/media-signed/*filepath", h.SoraGateway.MediaProxySigned)
 }
 
 // getGroupPlatform extracts the group platform from the API Key stored in context.

@@ -34,7 +34,12 @@ func (f *fakeSchedulerCache) GetSnapshot(_ context.Context, _ service.SchedulerB
 func (f *fakeSchedulerCache) SetSnapshot(_ context.Context, _ service.SchedulerBucket, _ []service.Account) error {
 	return nil
 }
-func (f *fakeSchedulerCache) GetAccount(_ context.Context, _ int64) (*service.Account, error) {
+func (f *fakeSchedulerCache) GetAccount(_ context.Context, id int64) (*service.Account, error) {
+	for _, account := range f.accounts {
+		if account != nil && account.ID == id {
+			return account, nil
+		}
+	}
 	return nil, nil
 }
 func (f *fakeSchedulerCache) SetAccount(_ context.Context, _ *service.Account) error { return nil }
@@ -161,11 +166,14 @@ func newTestGatewayHandler(t *testing.T, group *service.Group, accounts []*servi
 		nil, // digestStore
 		nil, // settingService
 		nil, // tlsFPProfileService
+		nil, // channelService
+		nil, // resolver
+		nil, // balanceNotifyService
 	)
 
 	// RunModeSimple：跳过计费检查，避免引入 repo/cache 依赖。
 	cfg := &config.Config{RunMode: config.RunModeSimple}
-	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, cfg)
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
 
 	concurrencySvc := service.NewConcurrencyService(&fakeConcurrencyCache{})
 	concurrencyHelper := NewConcurrencyHelper(concurrencySvc, SSEPingFormatClaude, 0)

@@ -582,8 +582,12 @@ func maxOutputTokensLimit(model string) int {
 	return maxOutputTokensUpperBound
 }
 
-func isAntigravityOpus46Model(model string) bool {
-	return strings.HasPrefix(strings.ToLower(model), "claude-opus-4-6")
+// isAntigravityOpusHighTierModel 判断是否为高阶 Opus 模型（4.6+），
+// 用于 adaptive thinking 时覆写为高预算。
+func isAntigravityOpusHighTierModel(model string) bool {
+	lower := strings.ToLower(model)
+	return strings.HasPrefix(lower, "claude-opus-4-6") ||
+		strings.HasPrefix(lower, "claude-opus-4-7")
 }
 
 func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
@@ -605,12 +609,12 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 		}
 
 		// - thinking.type=enabled：budget_tokens>0 用显式预算
-		// - thinking.type=adaptive：仅在 Antigravity 的 Opus 4.6 上覆写为 （24576）
+		// - thinking.type=adaptive：在 Antigravity 的高阶 Opus（4.6+）上覆写为 （24576）
 		budget := -1
 		if req.Thinking.BudgetTokens > 0 {
 			budget = req.Thinking.BudgetTokens
 		}
-		if req.Thinking.Type == "adaptive" && isAntigravityOpus46Model(req.Model) {
+		if req.Thinking.Type == "adaptive" && isAntigravityOpusHighTierModel(req.Model) {
 			budget = ClaudeAdaptiveHighThinkingBudgetTokens
 		}
 
@@ -730,13 +734,14 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 		})
 	}
 
-	if len(funcDecls) == 0 {
-		if !hasWebSearch {
-			return nil
-		}
-
-		// Web Search 工具映射
-		return []GeminiToolDeclaration{{
+	var declarations []GeminiToolDeclaration
+	if len(funcDecls) > 0 {
+		declarations = append(declarations, GeminiToolDeclaration{
+			FunctionDeclarations: funcDecls,
+		})
+	}
+	if hasWebSearch {
+		declarations = append(declarations, GeminiToolDeclaration{
 			GoogleSearch: &GeminiGoogleSearch{
 				EnhancedContent: &GeminiEnhancedContent{
 					ImageSearch: &GeminiImageSearch{
@@ -744,10 +749,11 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 					},
 				},
 			},
-		}}
+		})
+	}
+	if len(declarations) == 0 {
+		return nil
 	}
 
-	return []GeminiToolDeclaration{{
-		FunctionDeclarations: funcDecls,
-	}}
+	return declarations
 }

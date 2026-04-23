@@ -112,15 +112,21 @@
                 </p>
                 <p class="text-xs">
                   <span
-                    class="text-amber-600 dark:text-amber-400"
+                    class="text-green-600 dark:text-green-400"
                     :title="t('admin.dashboard.actual')"
                     >${{ formatCost(stats.today_actual_cost) }}</span
                   >
+                  <span class="text-gray-400 dark:text-gray-500"> / </span>
+                  <span
+                    class="text-orange-500 dark:text-orange-400"
+                    :title="t('admin.dashboard.accountCost')"
+                    >${{ formatCost(stats.today_account_cost) }}</span
+                  >
+                  <span class="text-gray-400 dark:text-gray-500"> / </span>
                   <span
                     class="text-gray-400 dark:text-gray-500"
                     :title="t('admin.dashboard.standard')"
-                  >
-                    / ${{ formatCost(stats.today_cost) }}</span
+                    >${{ formatCost(stats.today_cost) }}</span
                   >
                 </p>
               </div>
@@ -142,15 +148,21 @@
                 </p>
                 <p class="text-xs">
                   <span
-                    class="text-indigo-600 dark:text-indigo-400"
+                    class="text-green-600 dark:text-green-400"
                     :title="t('admin.dashboard.actual')"
                     >${{ formatCost(stats.total_actual_cost) }}</span
                   >
+                  <span class="text-gray-400 dark:text-gray-500"> / </span>
+                  <span
+                    class="text-orange-500 dark:text-orange-400"
+                    :title="t('admin.dashboard.accountCost')"
+                    >${{ formatCost(stats.total_account_cost) }}</span
+                  >
+                  <span class="text-gray-400 dark:text-gray-500"> / </span>
                   <span
                     class="text-gray-400 dark:text-gray-500"
                     :title="t('admin.dashboard.standard')"
-                  >
-                    / ${{ formatCost(stats.total_cost) }}</span
+                    >${{ formatCost(stats.total_cost) }}</span
                   >
                 </p>
               </div>
@@ -219,6 +231,9 @@
                   @change="onDateRangeChange"
                 />
               </div>
+              <button @click="loadDashboardStats" :disabled="chartsLoading" class="btn btn-secondary">
+                {{ t('common.refresh') }}
+              </button>
               <div class="ml-auto flex items-center gap-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >{{ t('admin.dashboard.granularity') }}:</span

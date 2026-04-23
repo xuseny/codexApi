@@ -158,6 +158,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqStream := parsedReq.Stream
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
+	// 解析渠道级模型映射
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+
 	// 设置 max_tokens=1 + haiku 探测请求标识到 context 中
 	// 必须在 SetClaudeCodeClientContext 之前设置，因为 ClaudeCodeValidator 需要读取此标识进行绕过判断
 	if isMaxTokensOneHaikuRequest(reqModel, parsedReq.MaxTokens, reqStream) {
@@ -240,10 +243,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 2. 【新增】Wait后二次检查余额/订阅
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
 		reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message := billingErrorDetails(err)
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+
+	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
+	parsedReq.GroupID = apiKey.GroupID
 
 	// 计算粘性会话hash
 	parsedReq.SessionContext = &service.SessionContext{
@@ -292,7 +301,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		}
 
 		for {
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "") // Gemini 不使用会话限制
+			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
@@ -467,6 +476,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			h.submitUsageRecordTask(func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
+					ParsedRequest:      parsedReq,
 					APIKey:             apiKey,
 					User:               apiKey.User,
 					Account:            account,
@@ -478,6 +488,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
+					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -514,7 +525,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 		for {
 			// 选择支持该模型的账号
-			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID)
+			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), currentAPIKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, parsedReq.MetadataUserID, subject.UserID)
 			if err != nil {
 				if len(fs.FailedAccountIDs) == 0 {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
@@ -660,7 +671,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			parsedReq.OnUpstreamAccepted = queueRelease
 			// ===== 用户消息串行队列 END =====
 
+			// 应用渠道模型映射到请求
+			if channelMapping.Mapped {
+				parsedReq.Model = channelMapping.MappedModel
+				parsedReq.Body = h.gatewayService.ReplaceModelInBody(parsedReq.Body, channelMapping.MappedModel)
+				body = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+			}
+
 			// 转发请求 - 根据账号平台分流
+			c.Set("parsed_request", parsedReq)
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()
 			if fs.SwitchCount > 0 {
@@ -719,7 +738,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						}
 						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
 						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil); err != nil {
-							status, code, message := billingErrorDetails(err)
+							status, code, message, retryAfter := billingErrorDetails(err)
+							if retryAfter > 0 {
+								c.Header("Retry-After", strconv.Itoa(retryAfter))
+							}
 							h.handleStreamingAwareError(c, status, code, message, streamStarted)
 							return
 						}
@@ -799,6 +821,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			h.submitUsageRecordTask(func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
+					ParsedRequest:      parsedReq,
 					APIKey:             currentAPIKey,
 					User:               currentAPIKey.User,
 					Account:            account,
@@ -810,6 +833,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					ForceCacheBilling:  fs.ForceCacheBilling,
 					APIKeyService:      h.apiKeyService,
+					ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 				}); err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
@@ -845,14 +869,6 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
 		platform = forcedPlatform
-	}
-
-	if platform == service.PlatformSora {
-		c.JSON(http.StatusOK, gin.H{
-			"object": "list",
-			"data":   service.DefaultSoraModels(h.cfg),
-		})
-		return
 	}
 
 	// Get available models from account configurations (without platform filter)
@@ -1443,7 +1459,10 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	// 校验 billing eligibility（订阅/余额）
 	// 【注意】不计算并发，但需要校验订阅/余额
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		status, code, message := billingErrorDetails(err)
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
 		h.errorResponse(c, status, code, message)
 		return
 	}
@@ -1686,25 +1705,32 @@ func sendMockInterceptResponse(c *gin.Context, model string, interceptType Inter
 	c.JSON(http.StatusOK, response)
 }
 
-func billingErrorDetails(err error) (status int, code, message string) {
+func billingErrorDetails(err error) (status int, code, message string, retryAfter int) {
 	if errors.Is(err, service.ErrBillingServiceUnavailable) {
 		msg := pkgerrors.Message(err)
 		if msg == "" {
 			msg = "Billing service temporarily unavailable. Please retry later."
 		}
-		return http.StatusServiceUnavailable, "billing_service_error", msg
+		return http.StatusServiceUnavailable, "billing_service_error", msg, 0
 	}
 	if errors.Is(err, service.ErrAPIKeyRateLimit5hExceeded) {
 		msg := pkgerrors.Message(err)
-		return http.StatusTooManyRequests, "rate_limit_exceeded", msg
+		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
 	}
 	if errors.Is(err, service.ErrAPIKeyRateLimit1dExceeded) {
 		msg := pkgerrors.Message(err)
-		return http.StatusTooManyRequests, "rate_limit_exceeded", msg
+		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
 	}
 	if errors.Is(err, service.ErrAPIKeyRateLimit7dExceeded) {
 		msg := pkgerrors.Message(err)
-		return http.StatusTooManyRequests, "rate_limit_exceeded", msg
+		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
+	}
+	// 用户/分组 RPM 超限统一映射为 HTTP 429；保留与其它 rate_limit 一致的错误码便于客户端分类。
+	// 返回 Retry-After 秒数（当前分钟剩余秒数），让 SDK 自动退避。
+	if errors.Is(err, service.ErrGroupRPMExceeded) || errors.Is(err, service.ErrUserRPMExceeded) {
+		msg := pkgerrors.Message(err)
+		retrySeconds := 60 - int(time.Now().Unix()%60)
+		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, retrySeconds
 	}
 	msg := pkgerrors.Message(err)
 	if msg == "" {
@@ -1714,7 +1740,7 @@ func billingErrorDetails(err error) (status int, code, message string) {
 		).Warn("gateway.billing_error_missing_message")
 		msg = "Billing error"
 	}
-	return http.StatusForbidden, "billing_error", msg
+	return http.StatusForbidden, "billing_error", msg, 0
 }
 
 func (h *GatewayHandler) metadataBridgeEnabled() bool {

@@ -95,10 +95,13 @@ function unwrapApiResponse(response: AxiosResponse): AxiosResponse {
     if (apiResponse.code === 0) {
       response.data = apiResponse.data
     } else {
+      const resp = apiResponse as unknown as Record<string, unknown>
       throw {
         status: response.status,
         code: apiResponse.code,
-        message: apiResponse.message || 'Unknown error'
+        message: apiResponse.message || 'Unknown error',
+        reason: resp.reason,
+        metadata: resp.metadata,
       }
     }
   }

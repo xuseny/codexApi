@@ -69,18 +69,70 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 	}
 }
 
-func TestResolveOpenAIForwardModel_PreventsClaudeModelFromFallingBackToGpt51(t *testing.T) {
+func TestResolveOpenAIForwardModel_PreventsClaudeModelFromFallingBackToGpt54(t *testing.T) {
 	account := &Account{
 		Credentials: map[string]any{},
 	}
 
-	withoutDefault := resolveOpenAIForwardModel(account, "claude-opus-4-6", "")
-	if got := normalizeCodexModel(withoutDefault); got != "gpt-5.1" {
-		t.Fatalf("normalizeCodexModel(%q) = %q, want %q", withoutDefault, got, "gpt-5.1")
+	withoutDefault := normalizeCodexModel(resolveOpenAIForwardModel(account, "claude-opus-4-6", ""))
+	if withoutDefault != "gpt-5.4" {
+		t.Fatalf("normalizeCodexModel(...) = %q, want %q", withoutDefault, "gpt-5.4")
 	}
 
-	withDefault := resolveOpenAIForwardModel(account, "claude-opus-4-6", "gpt-5.4")
-	if got := normalizeCodexModel(withDefault); got != "gpt-5.4" {
-		t.Fatalf("normalizeCodexModel(%q) = %q, want %q", withDefault, got, "gpt-5.4")
+	withDefault := normalizeCodexModel(resolveOpenAIForwardModel(account, "claude-opus-4-6", "gpt-5.4"))
+	if withDefault != "gpt-5.4" {
+		t.Fatalf("normalizeCodexModel(...) = %q, want %q", withDefault, "gpt-5.4")
+	}
+}
+
+func TestNormalizeCodexModel(t *testing.T) {
+	cases := map[string]string{
+		"gpt-5.3-codex-spark":       "gpt-5.3-codex-spark",
+		"gpt-5.3-codex-spark-high":  "gpt-5.3-codex-spark",
+		"gpt-5.3-codex-spark-xhigh": "gpt-5.3-codex-spark",
+		"gpt-5.3":                   "gpt-5.3-codex",
+		"gpt-image-2":               "gpt-image-2",
+	}
+
+	for input, expected := range cases {
+		if got := normalizeCodexModel(input); got != expected {
+			t.Fatalf("normalizeCodexModel(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+func TestNormalizeOpenAIModelForUpstream(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		model   string
+		want    string
+	}{
+		{
+			name:    "oauth keeps codex normalization behavior",
+			account: &Account{Type: AccountTypeOAuth},
+			model:   "gemini-3-flash-preview",
+			want:    "gpt-5.4",
+		},
+		{
+			name:    "apikey preserves custom compatible model",
+			account: &Account{Type: AccountTypeAPIKey},
+			model:   "gemini-3-flash-preview",
+			want:    "gemini-3-flash-preview",
+		},
+		{
+			name:    "apikey preserves official non codex model",
+			account: &Account{Type: AccountTypeAPIKey},
+			model:   "gpt-4.1",
+			want:    "gpt-4.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeOpenAIModelForUpstream(tt.account, tt.model); got != tt.want {
+				t.Fatalf("normalizeOpenAIModelForUpstream(...) = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

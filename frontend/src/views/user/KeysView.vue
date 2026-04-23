@@ -57,7 +57,15 @@
       </template>
 
       <template #table>
-        <DataTable :columns="columns" :data="apiKeys" :loading="loading">
+        <DataTable
+          :columns="columns"
+          :data="apiKeys"
+          :loading="loading"
+          :server-side-sort="true"
+          default-sort-key="created_at"
+          default-sort-order="desc"
+          @sort="handleSort"
+        >
           <template #header-select>
             <input
               type="checkbox"
@@ -1170,6 +1178,10 @@ const pagination = ref({
   total: 0,
   pages: 0
 })
+const sortState = ref({
+  sort_by: 'created_at',
+  sort_order: 'desc' as 'asc' | 'desc'
+})
 
 // Filter state
 const filterSearch = ref('')
@@ -1432,6 +1444,13 @@ const toggleSelectRow = (id: number, event: Event) => {
 const openBatchDelete = () => {
   if (selectedCount.value === 0) return
   showBatchDeleteDialog.value = true
+}
+
+const handleSort = (key: string, order: 'asc' | 'desc') => {
+  sortState.value.sort_by = key
+  sortState.value.sort_order = order
+  pagination.value.page = 1
+  loadApiKeys()
 }
 
 const editKey = (key: ApiKey) => {

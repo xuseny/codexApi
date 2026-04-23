@@ -41,7 +41,7 @@
         </span>
       </div>
 
-      <div v-if="!isSoraAccount" class="space-y-1.5">
+      <div class="space-y-1.5">
         <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
           {{ t('admin.accounts.selectTestModel') }}
         </label>
@@ -54,19 +54,13 @@
           :placeholder="loadingModels ? t('common.loading') + '...' : t('admin.accounts.selectTestModel')"
         />
       </div>
-      <div
-        v-else
-        class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
-      >
-        {{ t('admin.accounts.soraTestHint') }}
-      </div>
 
-      <div v-if="supportsGeminiImageTest" class="space-y-1.5">
+      <div v-if="supportsImageTest" class="space-y-1.5">
         <TextArea
           v-model="testPrompt"
-          :label="t('admin.accounts.geminiImagePromptLabel')"
-          :placeholder="t('admin.accounts.geminiImagePromptPlaceholder')"
-          :hint="t('admin.accounts.geminiImageTestHint')"
+          :label="t('admin.accounts.imagePromptLabel')"
+          :placeholder="t('admin.accounts.imagePromptPlaceholder')"
+          :hint="t('admin.accounts.imageTestHint')"
           :disabled="status === 'connecting'"
           rows="3"
         />
@@ -128,41 +122,63 @@
 
       <div v-if="generatedImages.length > 0" class="space-y-2">
         <div class="text-xs font-medium text-gray-600 dark:text-gray-300">
-          {{ t('admin.accounts.geminiImagePreview') }}
+          {{ t('admin.accounts.imagePreview') }}
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <a
+        <div class="flex flex-wrap justify-center gap-3">
+          <div
             v-for="(image, index) in generatedImages"
             :key="`${image.url}-${index}`"
-            :href="image.url"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-dark-500 dark:bg-dark-700"
+            class="group/img relative cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-dark-500 dark:bg-dark-700"
+            @click="previewImageUrl = image.url"
           >
-            <img :src="image.url" :alt="`gemini-test-image-${index + 1}`" class="h-48 w-full object-cover" />
-            <div class="border-t border-gray-100 px-3 py-2 text-xs text-gray-500 dark:border-dark-500 dark:text-gray-300">
+            <img :src="image.url" :alt="`test-image-${index + 1}`" class="max-h-[360px] w-full object-contain" />
+            <div class="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover/img:bg-black/20">
+              <Icon name="eye" size="lg" class="text-white opacity-0 drop-shadow-lg transition-opacity group-hover/img:opacity-100" :stroke-width="2" />
+            </div>
+            <div class="border-t border-gray-100 px-3 py-1.5 text-xs text-gray-500 dark:border-dark-500 dark:text-gray-300">
               {{ image.mimeType || 'image/*' }}
             </div>
-          </a>
+          </div>
         </div>
       </div>
+
+      <!-- Image Lightbox -->
+      <Teleport to="body">
+        <Transition name="fade">
+          <div
+            v-if="previewImageUrl"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+            @click.self="previewImageUrl = ''"
+          >
+            <button
+              class="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white transition-colors hover:bg-black/70"
+              @click="previewImageUrl = ''"
+            >
+              <Icon name="x" size="lg" :stroke-width="2" />
+            </button>
+            <img
+              :src="previewImageUrl"
+              alt="preview"
+              class="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+            />
+          </div>
+        </Transition>
+      </Teleport>
 
       <!-- Test Info -->
       <div class="flex items-center justify-between px-1 text-xs text-gray-500 dark:text-gray-400">
         <div class="flex items-center gap-3">
           <span class="flex items-center gap-1">
             <Icon name="grid" size="sm" :stroke-width="2" />
-            {{ isSoraAccount ? t('admin.accounts.soraTestTarget') : t('admin.accounts.testModel') }}
+            {{ t('admin.accounts.testModel') }}
           </span>
         </div>
         <span class="flex items-center gap-1">
           <Icon name="chat" size="sm" :stroke-width="2" />
           {{
-            isSoraAccount
-              ? t('admin.accounts.soraTestMode')
-              : supportsGeminiImageTest
-                ? t('admin.accounts.geminiImageTestMode')
-                : t('admin.accounts.testPrompt')
+            supportsImageTest
+              ? t('admin.accounts.imageTestMode')
+              : t('admin.accounts.testPrompt')
           }}
         </span>
       </div>
@@ -173,16 +189,15 @@
         <button
           @click="handleClose"
           class="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500"
-          :disabled="status === 'connecting'"
         >
           {{ t('common.close') }}
         </button>
         <button
           @click="startTest"
-          :disabled="status === 'connecting' || (!isSoraAccount && !selectedModelId)"
+          :disabled="status === 'connecting' || !selectedModelId"
           :class="[
             'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all',
-            status === 'connecting' || (!isSoraAccount && !selectedModelId)
+            status === 'connecting' || !selectedModelId
               ? 'cursor-not-allowed bg-primary-400 text-white'
               : status === 'success'
                 ? 'bg-green-500 text-white hover:bg-green-600'
@@ -257,17 +272,24 @@ const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
 const loadingModels = ref(false)
-let eventSource: EventSource | null = null
-const isSoraAccount = computed(() => props.account?.platform === 'sora')
+let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
+const previewImageUrl = ref('')
 const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
 const supportsGeminiImageTest = computed(() => {
-  if (isSoraAccount.value) return false
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gemini-') || !modelID.includes('-image')) return false
 
   return props.account?.platform === 'gemini' || (props.account?.platform === 'antigravity' && props.account?.type === 'apikey')
 })
+
+const supportsOpenAIImageTest = computed(() => {
+  const modelID = selectedModelId.value.toLowerCase()
+  if (!modelID.startsWith('gpt-image-')) return false
+  return props.account?.platform === 'openai'
+})
+
+const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value)
 
 const sortTestModels = (models: ClaudeModel[]) => {
   const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
@@ -289,25 +311,19 @@ watch(
       resetState()
       await loadAvailableModels()
     } else {
-      closeEventSource()
+      abortStream()
     }
   }
 )
 
 watch(selectedModelId, () => {
-  if (supportsGeminiImageTest.value && !testPrompt.value.trim()) {
-    testPrompt.value = t('admin.accounts.geminiImagePromptDefault')
+  if (supportsImageTest.value && !testPrompt.value.trim()) {
+    testPrompt.value = t('admin.accounts.imagePromptDefault')
   }
 })
 
 const loadAvailableModels = async () => {
   if (!props.account) return
-  if (props.account.platform === 'sora') {
-    availableModels.value = []
-    selectedModelId.value = ''
-    loadingModels.value = false
-    return
-  }
 
   loadingModels.value = true
   selectedModelId.value = '' // Reset selection before loading
@@ -342,21 +358,18 @@ const resetState = () => {
   streamingContent.value = ''
   errorMessage.value = ''
   generatedImages.value = []
+  previewImageUrl.value = ''
 }
 
 const handleClose = () => {
-  // 防止在连接测试进行中关闭对话框
-  if (status.value === 'connecting') {
-    return
-  }
-  closeEventSource()
+  abortStream()
   emit('close')
 }
 
-const closeEventSource = () => {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
+const abortStream = () => {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
   }
 }
 
@@ -373,7 +386,7 @@ const scrollToBottom = async () => {
 }
 
 const startTest = async () => {
-  if (!props.account || (!isSoraAccount.value && !selectedModelId.value)) return
+  if (!props.account || !selectedModelId.value) return
 
   resetState()
   status.value = 'connecting'
@@ -381,7 +394,9 @@ const startTest = async () => {
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
   addLine('', 'text-gray-300')
 
-  closeEventSource()
+  abortStream()
+
+  abortController = new AbortController()
 
   try {
     // Create EventSource for SSE
@@ -394,14 +409,11 @@ const startTest = async () => {
         Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(
-        isSoraAccount.value
-          ? {}
-          : {
+      body: JSON.stringify({
               model_id: selectedModelId.value,
-              prompt: supportsGeminiImageTest.value ? testPrompt.value.trim() : ''
-            }
-      )
+              prompt: supportsImageTest.value ? testPrompt.value.trim() : ''
+            }),
+      signal: abortController.signal
     })
 
     if (!response.ok) {
@@ -438,10 +450,15 @@ const startTest = async () => {
         }
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      status.value = 'idle'
+      return
+    }
     status.value = 'error'
-    errorMessage.value = error.message || 'Unknown error'
-    addLine(`Error: ${errorMessage.value}`, 'text-red-400')
+    const msg = error instanceof Error ? error.message : 'Unknown error'
+    errorMessage.value = msg
+    addLine(`Error: ${msg}`, 'text-red-400')
   }
 }
 
@@ -461,10 +478,8 @@ const handleEvent = (event: {
         addLine(t('admin.accounts.usingModel', { model: event.model }), 'text-cyan-400')
       }
       addLine(
-        isSoraAccount.value
-          ? t('admin.accounts.soraTestingFlow')
-          : supportsGeminiImageTest.value
-            ? t('admin.accounts.sendingGeminiImageRequest')
+        supportsImageTest.value
+            ? t('admin.accounts.sendingImageRequest')
             : t('admin.accounts.sendingTestMessage'),
         'text-gray-400'
       )
@@ -485,7 +500,7 @@ const handleEvent = (event: {
           url: event.image_url,
           mimeType: event.mime_type
         })
-        addLine(t('admin.accounts.geminiImageReceived', { count: generatedImages.value.length }), 'text-purple-300')
+        addLine(t('admin.accounts.imageReceived', { count: generatedImages.value.length }), 'text-purple-300')
       }
       break
 
@@ -519,3 +534,14 @@ const copyOutput = () => {
   copyToClipboard(text, t('admin.accounts.outputCopied'))
 }
 </script>
+
+<style>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</style>

@@ -87,28 +87,6 @@ func (Group) Fields() []ent.Field {
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
 
-		// Sora 按次计费配置（阶段 1）
-		field.Float("sora_image_price_360").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
-		field.Float("sora_image_price_540").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
-		field.Float("sora_video_price_per_request").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
-		field.Float("sora_video_price_per_request_hd").
-			Optional().
-			Nillable().
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
-
-		// Sora 存储配额
-		field.Int64("sora_storage_quota_bytes").
-			Default(0),
-
 		// Claude Code 客户端限制 (added by migration 029)
 		field.Bool("claude_code_only").
 			Default(false).
@@ -153,10 +131,25 @@ func (Group) Fields() []ent.Field {
 		field.Bool("allow_messages_dispatch").
 			Default(false).
 			Comment("是否允许 /v1/messages 调度到此 OpenAI 分组"),
+		field.Bool("require_oauth_only").
+			Default(false).
+			Comment("仅允许非 apikey 类型账号关联到此分组"),
+		field.Bool("require_privacy_set").
+			Default(false).
+			Comment("调度时仅允许 privacy 已成功设置的账号"),
 		field.String("default_mapped_model").
 			MaxLen(100).
 			Default("").
 			Comment("默认映射模型 ID，当账号级映射找不到时使用此值"),
+		field.JSON("messages_dispatch_model_config", domain.OpenAIMessagesDispatchModelConfig{}).
+			Default(domain.OpenAIMessagesDispatchModelConfig{}).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("OpenAI Messages 调度模型配置：按 Claude 系列/精确模型映射到目标 GPT 模型"),
+
+		// 分组级每分钟请求数上限（0 = 不限制）。设置后优先于用户级兜底生效。
+		field.Int("rpm_limit").
+			Default(0).
+			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
 	}
 }
 

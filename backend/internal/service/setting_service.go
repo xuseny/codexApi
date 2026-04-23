@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -16,14 +17,13 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/imroc/req/v3"
 	"golang.org/x/sync/singleflight"
 )
 
 var (
 	ErrRegistrationDisabled   = infraerrors.Forbidden("REGISTRATION_DISABLED", "registration is currently disabled")
 	ErrSettingNotFound        = infraerrors.NotFound("SETTING_NOT_FOUND", "setting not found")
-	ErrSoraS3ProfileNotFound  = infraerrors.NotFound("SORA_S3_PROFILE_NOT_FOUND", "sora s3 profile not found")
-	ErrSoraS3ProfileExists    = infraerrors.Conflict("SORA_S3_PROFILE_EXISTS", "sora s3 profile already exists")
 	ErrDefaultSubGroupInvalid = infraerrors.BadRequest(
 		"DEFAULT_SUBSCRIPTION_GROUP_INVALID",
 		"default subscription group must exist and be subscription type",
@@ -83,6 +83,7 @@ const backendModeDBTimeout = 5 * time.Second
 type cachedGatewayForwardingSettings struct {
 	fingerprintUnification bool
 	metadataPassthrough    bool
+	cchSigning             bool
 	expiresAt              int64 // unix nano
 }
 
@@ -98,14 +99,266 @@ type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
 }
 
+// WebSearchManagerBuilder creates a websearch.Manager from config (injected by infra layer).
+// proxyURLs maps proxy ID to resolved URL for provider-level proxy support.
+type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[int64]string)
+
 // SettingService 系统设置服务
 type SettingService struct {
-	settingRepo           SettingRepository
-	defaultSubGroupReader DefaultSubscriptionGroupReader
-	cfg                   *config.Config
-	onUpdate              func() // Callback when settings are updated (for cache invalidation)
-	onS3Update            func() // Callback when Sora S3 settings are updated
-	version               string // Application version
+	settingRepo             SettingRepository
+	defaultSubGroupReader   DefaultSubscriptionGroupReader
+	proxyRepo               ProxyRepository // for resolving websearch provider proxy URLs
+	cfg                     *config.Config
+	onUpdate                func() // Callback when settings are updated (for cache invalidation)
+	version                 string // Application version
+	webSearchManagerBuilder WebSearchManagerBuilder
+}
+
+type ProviderDefaultGrantSettings struct {
+	Balance          float64
+	Concurrency      int
+	Subscriptions    []DefaultSubscriptionSetting
+	GrantOnSignup    bool
+	GrantOnFirstBind bool
+}
+
+type AuthSourceDefaultSettings struct {
+	Email                        ProviderDefaultGrantSettings
+	LinuxDo                      ProviderDefaultGrantSettings
+	OIDC                         ProviderDefaultGrantSettings
+	WeChat                       ProviderDefaultGrantSettings
+	ForceEmailOnThirdPartySignup bool
+}
+
+type authSourceDefaultKeySet struct {
+	balance          string
+	concurrency      string
+	subscriptions    string
+	grantOnSignup    string
+	grantOnFirstBind string
+}
+
+var (
+	emailAuthSourceDefaultKeys = authSourceDefaultKeySet{
+		balance:          SettingKeyAuthSourceDefaultEmailBalance,
+		concurrency:      SettingKeyAuthSourceDefaultEmailConcurrency,
+		subscriptions:    SettingKeyAuthSourceDefaultEmailSubscriptions,
+		grantOnSignup:    SettingKeyAuthSourceDefaultEmailGrantOnSignup,
+		grantOnFirstBind: SettingKeyAuthSourceDefaultEmailGrantOnFirstBind,
+	}
+	linuxDoAuthSourceDefaultKeys = authSourceDefaultKeySet{
+		balance:          SettingKeyAuthSourceDefaultLinuxDoBalance,
+		concurrency:      SettingKeyAuthSourceDefaultLinuxDoConcurrency,
+		subscriptions:    SettingKeyAuthSourceDefaultLinuxDoSubscriptions,
+		grantOnSignup:    SettingKeyAuthSourceDefaultLinuxDoGrantOnSignup,
+		grantOnFirstBind: SettingKeyAuthSourceDefaultLinuxDoGrantOnFirstBind,
+	}
+	oidcAuthSourceDefaultKeys = authSourceDefaultKeySet{
+		balance:          SettingKeyAuthSourceDefaultOIDCBalance,
+		concurrency:      SettingKeyAuthSourceDefaultOIDCConcurrency,
+		subscriptions:    SettingKeyAuthSourceDefaultOIDCSubscriptions,
+		grantOnSignup:    SettingKeyAuthSourceDefaultOIDCGrantOnSignup,
+		grantOnFirstBind: SettingKeyAuthSourceDefaultOIDCGrantOnFirstBind,
+	}
+	weChatAuthSourceDefaultKeys = authSourceDefaultKeySet{
+		balance:          SettingKeyAuthSourceDefaultWeChatBalance,
+		concurrency:      SettingKeyAuthSourceDefaultWeChatConcurrency,
+		subscriptions:    SettingKeyAuthSourceDefaultWeChatSubscriptions,
+		grantOnSignup:    SettingKeyAuthSourceDefaultWeChatGrantOnSignup,
+		grantOnFirstBind: SettingKeyAuthSourceDefaultWeChatGrantOnFirstBind,
+	}
+)
+
+const (
+	defaultAuthSourceBalance     = 0
+	defaultAuthSourceConcurrency = 5
+	defaultWeChatConnectMode     = "open"
+	defaultWeChatConnectScopes   = "snsapi_login"
+	defaultWeChatConnectFrontend = "/auth/wechat/callback"
+)
+
+func normalizeWeChatConnectModeSetting(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "mp":
+		return "mp"
+	case "mobile":
+		return "mobile"
+	default:
+		return "open"
+	}
+}
+
+func defaultWeChatConnectScopeForMode(mode string) string {
+	switch normalizeWeChatConnectModeSetting(mode) {
+	case "mp":
+		return "snsapi_userinfo"
+	case "mobile":
+		return ""
+	}
+	return defaultWeChatConnectScopes
+}
+
+func normalizeWeChatConnectScopeSetting(raw, mode string) string {
+	switch normalizeWeChatConnectModeSetting(mode) {
+	case "mp":
+		switch strings.TrimSpace(raw) {
+		case "snsapi_base":
+			return "snsapi_base"
+		case "snsapi_userinfo":
+			return "snsapi_userinfo"
+		default:
+			return defaultWeChatConnectScopeForMode(mode)
+		}
+	case "mobile":
+		return ""
+	default:
+		return defaultWeChatConnectScopes
+	}
+}
+
+func parseWeChatConnectCapabilitySettings(settings map[string]string, enabled bool, mode string) (bool, bool, bool) {
+	mode = normalizeWeChatConnectModeSetting(mode)
+	rawOpen, hasOpen := settings[SettingKeyWeChatConnectOpenEnabled]
+	rawMP, hasMP := settings[SettingKeyWeChatConnectMPEnabled]
+	rawMobile, hasMobile := settings[SettingKeyWeChatConnectMobileEnabled]
+	openConfigured := hasOpen && strings.TrimSpace(rawOpen) != ""
+	mpConfigured := hasMP && strings.TrimSpace(rawMP) != ""
+	mobileConfigured := hasMobile && strings.TrimSpace(rawMobile) != ""
+
+	if openConfigured || mpConfigured || mobileConfigured {
+		openEnabled := strings.TrimSpace(rawOpen) == "true"
+		mpEnabled := strings.TrimSpace(rawMP) == "true"
+		mobileEnabled := strings.TrimSpace(rawMobile) == "true"
+		return openEnabled, mpEnabled, mobileEnabled
+	}
+
+	if !enabled {
+		return false, false, false
+	}
+	if mode == "mp" {
+		return false, true, false
+	}
+	if mode == "mobile" {
+		return false, false, true
+	}
+	return true, false, false
+}
+
+func normalizeWeChatConnectStoredMode(openEnabled, mpEnabled, mobileEnabled bool, mode string) string {
+	mode = normalizeWeChatConnectModeSetting(mode)
+	switch mode {
+	case "open":
+		if openEnabled {
+			return "open"
+		}
+	case "mp":
+		if mpEnabled {
+			return "mp"
+		}
+	case "mobile":
+		if mobileEnabled {
+			return "mobile"
+		}
+	}
+	switch {
+	case openEnabled:
+		return "open"
+	case mpEnabled:
+		return "mp"
+	case mobileEnabled:
+		return "mobile"
+	default:
+		return mode
+	}
+}
+
+func mergeWeChatConnectCapabilitySettings(settings map[string]string, base config.WeChatConnectConfig, enabled bool, mode string) (bool, bool, bool) {
+	mode = normalizeWeChatConnectModeSetting(firstNonEmpty(mode, base.Mode))
+	rawOpen, hasOpen := settings[SettingKeyWeChatConnectOpenEnabled]
+	rawMP, hasMP := settings[SettingKeyWeChatConnectMPEnabled]
+	rawMobile, hasMobile := settings[SettingKeyWeChatConnectMobileEnabled]
+	openConfigured := hasOpen && strings.TrimSpace(rawOpen) != ""
+	mpConfigured := hasMP && strings.TrimSpace(rawMP) != ""
+	mobileConfigured := hasMobile && strings.TrimSpace(rawMobile) != ""
+
+	if openConfigured || mpConfigured || mobileConfigured {
+		openEnabled := strings.TrimSpace(rawOpen) == "true"
+		mpEnabled := strings.TrimSpace(rawMP) == "true"
+		mobileEnabled := strings.TrimSpace(rawMobile) == "true"
+		_, enabledConfigured := settings[SettingKeyWeChatConnectEnabled]
+		if !enabledConfigured &&
+			enabled &&
+			!openEnabled &&
+			!mpEnabled &&
+			!mobileEnabled &&
+			(base.OpenEnabled || base.MPEnabled || base.MobileEnabled) {
+			return base.OpenEnabled, base.MPEnabled, base.MobileEnabled
+		}
+		return openEnabled, mpEnabled, mobileEnabled
+	}
+	if !enabled {
+		return false, false, false
+	}
+	if base.OpenEnabled || base.MPEnabled || base.MobileEnabled {
+		return base.OpenEnabled, base.MPEnabled, base.MobileEnabled
+	}
+	return parseWeChatConnectCapabilitySettings(settings, enabled, mode)
+}
+
+func (s *SettingService) effectiveWeChatConnectOAuthConfig(settings map[string]string) WeChatConnectOAuthConfig {
+	base := config.WeChatConnectConfig{}
+	if s != nil && s.cfg != nil {
+		base = s.cfg.WeChat
+	}
+
+	enabled := base.Enabled
+	if raw, ok := settings[SettingKeyWeChatConnectEnabled]; ok {
+		enabled = strings.TrimSpace(raw) == "true"
+	}
+
+	legacyAppID := strings.TrimSpace(firstNonEmpty(
+		settings[SettingKeyWeChatConnectAppID],
+		base.AppID,
+		base.OpenAppID,
+		base.MPAppID,
+		base.MobileAppID,
+	))
+	legacyAppSecret := strings.TrimSpace(firstNonEmpty(
+		settings[SettingKeyWeChatConnectAppSecret],
+		base.AppSecret,
+		base.OpenAppSecret,
+		base.MPAppSecret,
+		base.MobileAppSecret,
+	))
+	openAppID := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectOpenAppID], base.OpenAppID, legacyAppID))
+	openAppSecret := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectOpenAppSecret], base.OpenAppSecret, legacyAppSecret))
+	mpAppID := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectMPAppID], base.MPAppID, legacyAppID))
+	mpAppSecret := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectMPAppSecret], base.MPAppSecret, legacyAppSecret))
+	mobileAppID := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectMobileAppID], base.MobileAppID, legacyAppID))
+	mobileAppSecret := strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectMobileAppSecret], base.MobileAppSecret, legacyAppSecret))
+
+	modeRaw := firstNonEmpty(settings[SettingKeyWeChatConnectMode], base.Mode)
+	openEnabled, mpEnabled, mobileEnabled := mergeWeChatConnectCapabilitySettings(settings, base, enabled, modeRaw)
+	mode := normalizeWeChatConnectStoredMode(openEnabled, mpEnabled, mobileEnabled, modeRaw)
+
+	return WeChatConnectOAuthConfig{
+		Enabled:             enabled,
+		LegacyAppID:         legacyAppID,
+		LegacyAppSecret:     legacyAppSecret,
+		OpenAppID:           openAppID,
+		OpenAppSecret:       openAppSecret,
+		MPAppID:             mpAppID,
+		MPAppSecret:         mpAppSecret,
+		MobileAppID:         mobileAppID,
+		MobileAppSecret:     mobileAppSecret,
+		OpenEnabled:         openEnabled,
+		MPEnabled:           mpEnabled,
+		MobileEnabled:       mobileEnabled,
+		Mode:                mode,
+		Scopes:              normalizeWeChatConnectScopeSetting(firstNonEmpty(settings[SettingKeyWeChatConnectScopes], base.Scopes), mode),
+		RedirectURL:         strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectRedirectURL], base.RedirectURL)),
+		FrontendRedirectURL: strings.TrimSpace(firstNonEmpty(settings[SettingKeyWeChatConnectFrontendRedirectURL], base.FrontendRedirectURL, defaultWeChatConnectFrontend)),
+	}
 }
 
 // NewSettingService 创建系统设置服务实例
@@ -119,6 +372,11 @@ func NewSettingService(settingRepo SettingRepository, cfg *config.Config) *Setti
 // SetDefaultSubscriptionGroupReader injects an optional group reader for default subscription validation.
 func (s *SettingService) SetDefaultSubscriptionGroupReader(reader DefaultSubscriptionGroupReader) {
 	s.defaultSubGroupReader = reader
+}
+
+// SetProxyRepository injects a proxy repo for resolving websearch provider proxy URLs.
+func (s *SettingService) SetProxyRepository(repo ProxyRepository) {
+	s.proxyRepo = repo
 }
 
 // GetAllSettings 获取所有系统设置
@@ -145,6 +403,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	keys := []string{
 		SettingKeyRegistrationEnabled,
 		SettingKeyEmailVerifyEnabled,
+		SettingKeyForceEmailOnThirdPartySignup,
 		SettingKeyRegistrationEmailSuffixWhitelist,
 		SettingKeyPromoCodeEnabled,
 		SettingKeyPasswordResetEnabled,
@@ -162,11 +421,35 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyHideCcsImportButton,
 		SettingKeyPurchaseSubscriptionEnabled,
 		SettingKeyPurchaseSubscriptionURL,
-		SettingKeySoraClientEnabled,
+		SettingKeyTableDefaultPageSize,
+		SettingKeyTablePageSizeOptions,
 		SettingKeyCustomMenuItems,
 		SettingKeyCustomEndpoints,
 		SettingKeyLinuxDoConnectEnabled,
+		SettingKeyWeChatConnectEnabled,
+		SettingKeyWeChatConnectAppID,
+		SettingKeyWeChatConnectAppSecret,
+		SettingKeyWeChatConnectOpenAppID,
+		SettingKeyWeChatConnectOpenAppSecret,
+		SettingKeyWeChatConnectMPAppID,
+		SettingKeyWeChatConnectMPAppSecret,
+		SettingKeyWeChatConnectMobileAppID,
+		SettingKeyWeChatConnectMobileAppSecret,
+		SettingKeyWeChatConnectOpenEnabled,
+		SettingKeyWeChatConnectMPEnabled,
+		SettingKeyWeChatConnectMobileEnabled,
+		SettingKeyWeChatConnectMode,
+		SettingKeyWeChatConnectScopes,
+		SettingKeyWeChatConnectRedirectURL,
+		SettingKeyWeChatConnectFrontendRedirectURL,
 		SettingKeyBackendModeEnabled,
+		SettingPaymentEnabled,
+		SettingKeyOIDCConnectEnabled,
+		SettingKeyOIDCConnectProviderName,
+		SettingKeyBalanceLowNotifyEnabled,
+		SettingKeyBalanceLowNotifyThreshold,
+		SettingKeyBalanceLowNotifyRechargeURL,
+		SettingKeyAccountQuotaNotifyEnabled,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -180,6 +463,20 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	} else {
 		linuxDoEnabled = s.cfg != nil && s.cfg.LinuxDo.Enabled
 	}
+	oidcEnabled := false
+	if raw, ok := settings[SettingKeyOIDCConnectEnabled]; ok {
+		oidcEnabled = raw == "true"
+	} else {
+		oidcEnabled = s.cfg != nil && s.cfg.OIDC.Enabled
+	}
+	oidcProviderName := strings.TrimSpace(settings[SettingKeyOIDCConnectProviderName])
+	if oidcProviderName == "" && s.cfg != nil {
+		oidcProviderName = strings.TrimSpace(s.cfg.OIDC.ProviderName)
+	}
+	if oidcProviderName == "" {
+		oidcProviderName = "OIDC"
+	}
+	weChatEnabled, weChatOpenEnabled, weChatMPEnabled, weChatMobileEnabled := s.weChatOAuthCapabilitiesFromSettings(settings)
 
 	// Password reset requires email verification to be enabled
 	emailVerifyEnabled := settings[SettingKeyEmailVerifyEnabled] == "true"
@@ -187,10 +484,20 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 	registrationEmailSuffixWhitelist := ParseRegistrationEmailSuffixWhitelist(
 		settings[SettingKeyRegistrationEmailSuffixWhitelist],
 	)
+	tableDefaultPageSize, tablePageSizeOptions := parseTablePreferences(
+		settings[SettingKeyTableDefaultPageSize],
+		settings[SettingKeyTablePageSizeOptions],
+	)
+
+	var balanceLowNotifyThreshold float64
+	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
+		balanceLowNotifyThreshold = v
+	}
 
 	return &PublicSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
 		EmailVerifyEnabled:               emailVerifyEnabled,
+		ForceEmailOnThirdPartySignup:     settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
 		RegistrationEmailSuffixWhitelist: registrationEmailSuffixWhitelist,
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             passwordResetEnabled,
@@ -208,11 +515,23 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
 		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
 		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
+		TableDefaultPageSize:             tableDefaultPageSize,
+		TablePageSizeOptions:             tablePageSizeOptions,
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
 		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
 		LinuxDoOAuthEnabled:              linuxDoEnabled,
+		WeChatOAuthEnabled:               weChatEnabled,
+		WeChatOAuthOpenEnabled:           weChatOpenEnabled,
+		WeChatOAuthMPEnabled:             weChatMPEnabled,
+		WeChatOAuthMobileEnabled:         weChatMobileEnabled,
 		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
+		PaymentEnabled:                   settings[SettingPaymentEnabled] == "true",
+		OIDCOAuthEnabled:                 oidcEnabled,
+		OIDCOAuthProviderName:            oidcProviderName,
+		BalanceLowNotifyEnabled:          settings[SettingKeyBalanceLowNotifyEnabled] == "true",
+		AccountQuotaNotifyEnabled:        settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
+		BalanceLowNotifyThreshold:        balanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL:      settings[SettingKeyBalanceLowNotifyRechargeURL],
 	}, nil
 }
 
@@ -220,11 +539,6 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
 func (s *SettingService) SetOnUpdateCallback(callback func()) {
 	s.onUpdate = callback
-}
-
-// SetOnS3UpdateCallback 设置 Sora S3 配置变更时的回调函数（用于刷新 S3 客户端缓存）。
-func (s *SettingService) SetOnS3UpdateCallback(callback func()) {
-	s.onS3Update = callback
 }
 
 // SetVersion sets the application version for injection into public settings
@@ -261,12 +575,24 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		HideCcsImportButton              bool            `json:"hide_ccs_import_button"`
 		PurchaseSubscriptionEnabled      bool            `json:"purchase_subscription_enabled"`
 		PurchaseSubscriptionURL          string          `json:"purchase_subscription_url,omitempty"`
-		SoraClientEnabled                bool            `json:"sora_client_enabled"`
+		TableDefaultPageSize             int             `json:"table_default_page_size"`
+		TablePageSizeOptions             []int           `json:"table_page_size_options"`
 		CustomMenuItems                  json.RawMessage `json:"custom_menu_items"`
 		CustomEndpoints                  json.RawMessage `json:"custom_endpoints"`
 		LinuxDoOAuthEnabled              bool            `json:"linuxdo_oauth_enabled"`
+		WeChatOAuthEnabled               bool            `json:"wechat_oauth_enabled"`
+		WeChatOAuthOpenEnabled           bool            `json:"wechat_oauth_open_enabled"`
+		WeChatOAuthMPEnabled             bool            `json:"wechat_oauth_mp_enabled"`
+		WeChatOAuthMobileEnabled         bool            `json:"wechat_oauth_mobile_enabled"`
 		BackendModeEnabled               bool            `json:"backend_mode_enabled"`
+		PaymentEnabled                   bool            `json:"payment_enabled"`
+		OIDCOAuthEnabled                 bool            `json:"oidc_oauth_enabled"`
+		OIDCOAuthProviderName            string          `json:"oidc_oauth_provider_name"`
 		Version                          string          `json:"version,omitempty"`
+		BalanceLowNotifyEnabled          bool            `json:"balance_low_notify_enabled"`
+		AccountQuotaNotifyEnabled        bool            `json:"account_quota_notify_enabled"`
+		BalanceLowNotifyThreshold        float64         `json:"balance_low_notify_threshold"`
+		BalanceLowNotifyRechargeURL      string          `json:"balance_low_notify_recharge_url"`
 	}{
 		RegistrationEnabled:              settings.RegistrationEnabled,
 		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
@@ -287,13 +613,83 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		HideCcsImportButton:              settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:      settings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:          settings.PurchaseSubscriptionURL,
-		SoraClientEnabled:                settings.SoraClientEnabled,
+		TableDefaultPageSize:             settings.TableDefaultPageSize,
+		TablePageSizeOptions:             settings.TablePageSizeOptions,
 		CustomMenuItems:                  filterUserVisibleMenuItems(settings.CustomMenuItems),
 		CustomEndpoints:                  safeRawJSONArray(settings.CustomEndpoints),
 		LinuxDoOAuthEnabled:              settings.LinuxDoOAuthEnabled,
+		WeChatOAuthEnabled:               settings.WeChatOAuthEnabled,
+		WeChatOAuthOpenEnabled:           settings.WeChatOAuthOpenEnabled,
+		WeChatOAuthMPEnabled:             settings.WeChatOAuthMPEnabled,
+		WeChatOAuthMobileEnabled:         settings.WeChatOAuthMobileEnabled,
 		BackendModeEnabled:               settings.BackendModeEnabled,
+		PaymentEnabled:                   settings.PaymentEnabled,
+		OIDCOAuthEnabled:                 settings.OIDCOAuthEnabled,
+		OIDCOAuthProviderName:            settings.OIDCOAuthProviderName,
 		Version:                          s.version,
+		BalanceLowNotifyEnabled:          settings.BalanceLowNotifyEnabled,
+		AccountQuotaNotifyEnabled:        settings.AccountQuotaNotifyEnabled,
+		BalanceLowNotifyThreshold:        settings.BalanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL:      settings.BalanceLowNotifyRechargeURL,
 	}, nil
+}
+
+func DefaultWeChatConnectScopesForMode(mode string) string {
+	return defaultWeChatConnectScopeForMode(mode)
+}
+
+func (s *SettingService) parseWeChatConnectOAuthConfig(settings map[string]string) (WeChatConnectOAuthConfig, error) {
+	cfg := s.effectiveWeChatConnectOAuthConfig(settings)
+
+	if !cfg.Enabled || (!cfg.OpenEnabled && !cfg.MPEnabled) {
+		return WeChatConnectOAuthConfig{}, infraerrors.NotFound("OAUTH_DISABLED", "wechat oauth is disabled")
+	}
+	if cfg.OpenEnabled {
+		if cfg.AppIDForMode("open") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth pc app id not configured")
+		}
+		if cfg.AppSecretForMode("open") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth pc app secret not configured")
+		}
+	}
+	if cfg.MPEnabled {
+		if cfg.AppIDForMode("mp") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth official account app id not configured")
+		}
+		if cfg.AppSecretForMode("mp") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth official account app secret not configured")
+		}
+	}
+	if cfg.MobileEnabled {
+		if cfg.AppIDForMode("mobile") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth mobile app id not configured")
+		}
+		if cfg.AppSecretForMode("mobile") == "" {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth mobile app secret not configured")
+		}
+	}
+	if v := strings.TrimSpace(cfg.RedirectURL); v != "" {
+		if err := config.ValidateAbsoluteHTTPURL(v); err != nil {
+			return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth redirect url invalid")
+		}
+	}
+	if err := config.ValidateFrontendRedirectURL(cfg.FrontendRedirectURL); err != nil {
+		return WeChatConnectOAuthConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "wechat oauth frontend redirect url invalid")
+	}
+	return cfg, nil
+}
+
+func (s *SettingService) weChatOAuthCapabilitiesFromSettings(settings map[string]string) (bool, bool, bool, bool) {
+	cfg := s.effectiveWeChatConnectOAuthConfig(settings)
+	if !cfg.Enabled {
+		return false, false, false, false
+	}
+
+	openReady := cfg.OpenEnabled && cfg.AppIDForMode("open") != "" && cfg.AppSecretForMode("open") != ""
+	mpReady := cfg.MPEnabled && cfg.AppIDForMode("mp") != "" && cfg.AppSecretForMode("mp") != ""
+	mobileReady := cfg.MobileEnabled && cfg.AppIDForMode("mobile") != "" && cfg.AppSecretForMode("mobile") != ""
+
+	return openReady || mpReady, openReady, mpReady, mobileReady
 }
 
 // filterUserVisibleMenuItems filters out admin-only menu items from a raw JSON
@@ -344,8 +740,8 @@ func safeRawJSONArray(raw string) json.RawMessage {
 	return json.RawMessage("[]")
 }
 
-// GetFrameSrcOrigins returns deduplicated http(s) origins from purchase_subscription_url
-// and all custom_menu_items URLs. Used by the router layer for CSP frame-src injection.
+// GetFrameSrcOrigins returns deduplicated http(s) origins from home_content URL,
+// purchase_subscription_url, and all custom_menu_items URLs. Used by the router layer for CSP frame-src injection.
 func (s *SettingService) GetFrameSrcOrigins(ctx context.Context) ([]string, error) {
 	settings, err := s.GetPublicSettings(ctx)
 	if err != nil {
@@ -363,6 +759,9 @@ func (s *SettingService) GetFrameSrcOrigins(ctx context.Context) ([]string, erro
 			}
 		}
 	}
+
+	// home content URL (when home_content is set to a URL for iframe embedding)
+	addOrigin(settings.HomeContent)
 
 	// purchase subscription URL
 	if settings.PurchaseSubscriptionEnabled {
@@ -415,19 +814,130 @@ func parseCustomMenuItemURLs(raw string) []string {
 	return urls
 }
 
+func oidcUsePKCECompatibilityDefault(base config.OIDCConnectConfig) bool {
+	if base.UsePKCEExplicit {
+		return base.UsePKCE
+	}
+	return true
+}
+
+func oidcValidateIDTokenCompatibilityDefault(base config.OIDCConnectConfig) bool {
+	if base.ValidateIDTokenExplicit {
+		return base.ValidateIDToken
+	}
+	return true
+}
+
+func oidcCompatibilityWriteDefault(base config.OIDCConnectConfig, configured bool, raw string, explicit bool, explicitValue bool) bool {
+	if configured {
+		return strings.TrimSpace(raw) == "true"
+	}
+	if explicit {
+		return explicitValue
+	}
+	return false
+}
+
 // UpdateSettings 更新系统设置
 func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSettings) error {
-	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
+	updates, err := s.buildSystemSettingsUpdates(ctx, settings)
+	if err != nil {
 		return err
+	}
+
+	err = s.settingRepo.SetMultiple(ctx, updates)
+	if err == nil {
+		s.refreshCachedSettings(settings)
+	}
+	return err
+}
+
+func (s *SettingService) OIDCSecurityWriteDefaults(ctx context.Context) (bool, bool, error) {
+	rawSettings, err := s.settingRepo.GetMultiple(ctx, []string{
+		SettingKeyOIDCConnectUsePKCE,
+		SettingKeyOIDCConnectValidateIDToken,
+	})
+	if err != nil {
+		return false, false, fmt.Errorf("get oidc security write defaults: %w", err)
+	}
+
+	base := config.OIDCConnectConfig{}
+	if s != nil && s.cfg != nil {
+		base = s.cfg.OIDC
+	}
+
+	rawUsePKCE, hasUsePKCE := rawSettings[SettingKeyOIDCConnectUsePKCE]
+	rawValidateIDToken, hasValidateIDToken := rawSettings[SettingKeyOIDCConnectValidateIDToken]
+
+	return oidcCompatibilityWriteDefault(base, hasUsePKCE, rawUsePKCE, base.UsePKCEExplicit, base.UsePKCE),
+		oidcCompatibilityWriteDefault(base, hasValidateIDToken, rawValidateIDToken, base.ValidateIDTokenExplicit, base.ValidateIDToken),
+		nil
+}
+
+// UpdateSettingsWithAuthSourceDefaults persists system settings and auth-source defaults in a single write.
+func (s *SettingService) UpdateSettingsWithAuthSourceDefaults(ctx context.Context, settings *SystemSettings, authDefaults *AuthSourceDefaultSettings) error {
+	updates, err := s.buildSystemSettingsUpdates(ctx, settings)
+	if err != nil {
+		return err
+	}
+
+	authSourceUpdates, err := s.buildAuthSourceDefaultUpdates(ctx, authDefaults)
+	if err != nil {
+		return err
+	}
+	for key, value := range authSourceUpdates {
+		updates[key] = value
+	}
+
+	err = s.settingRepo.SetMultiple(ctx, updates)
+	if err == nil {
+		s.refreshCachedSettings(settings)
+	}
+	return err
+}
+
+func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, settings *SystemSettings) (map[string]string, error) {
+	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
+		return nil, err
 	}
 	normalizedWhitelist, err := NormalizeRegistrationEmailSuffixWhitelist(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
-		return infraerrors.BadRequest("INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", err.Error())
+		return nil, infraerrors.BadRequest("INVALID_REGISTRATION_EMAIL_SUFFIX_WHITELIST", err.Error())
 	}
 	if normalizedWhitelist == nil {
 		normalizedWhitelist = []string{}
 	}
 	settings.RegistrationEmailSuffixWhitelist = normalizedWhitelist
+	alipaySource, err := normalizeVisibleMethodSettingSource("alipay", settings.PaymentVisibleMethodAlipaySource, settings.PaymentVisibleMethodAlipayEnabled)
+	if err != nil {
+		return nil, err
+	}
+	wxpaySource, err := normalizeVisibleMethodSettingSource("wxpay", settings.PaymentVisibleMethodWxpaySource, settings.PaymentVisibleMethodWxpayEnabled)
+	if err != nil {
+		return nil, err
+	}
+	settings.PaymentVisibleMethodAlipaySource = alipaySource
+	settings.PaymentVisibleMethodWxpaySource = wxpaySource
+	settings.WeChatConnectAppID = strings.TrimSpace(settings.WeChatConnectAppID)
+	settings.WeChatConnectAppSecret = strings.TrimSpace(settings.WeChatConnectAppSecret)
+	settings.WeChatConnectOpenAppID = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectOpenAppID, settings.WeChatConnectAppID))
+	settings.WeChatConnectOpenAppSecret = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectOpenAppSecret, settings.WeChatConnectAppSecret))
+	settings.WeChatConnectMPAppID = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectMPAppID, settings.WeChatConnectAppID))
+	settings.WeChatConnectMPAppSecret = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectMPAppSecret, settings.WeChatConnectAppSecret))
+	settings.WeChatConnectMobileAppID = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectMobileAppID, settings.WeChatConnectAppID))
+	settings.WeChatConnectMobileAppSecret = strings.TrimSpace(firstNonEmpty(settings.WeChatConnectMobileAppSecret, settings.WeChatConnectAppSecret))
+	settings.WeChatConnectMode = normalizeWeChatConnectStoredMode(
+		settings.WeChatConnectOpenEnabled,
+		settings.WeChatConnectMPEnabled,
+		settings.WeChatConnectMobileEnabled,
+		settings.WeChatConnectMode,
+	)
+	settings.WeChatConnectScopes = normalizeWeChatConnectScopeSetting(settings.WeChatConnectScopes, settings.WeChatConnectMode)
+	settings.WeChatConnectRedirectURL = strings.TrimSpace(settings.WeChatConnectRedirectURL)
+	settings.WeChatConnectFrontendRedirectURL = strings.TrimSpace(settings.WeChatConnectFrontendRedirectURL)
+	if settings.WeChatConnectFrontendRedirectURL == "" {
+		settings.WeChatConnectFrontendRedirectURL = defaultWeChatConnectFrontend
+	}
 
 	updates := make(map[string]string)
 
@@ -436,7 +946,7 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	updates[SettingKeyEmailVerifyEnabled] = strconv.FormatBool(settings.EmailVerifyEnabled)
 	registrationEmailSuffixWhitelistJSON, err := json.Marshal(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {
-		return fmt.Errorf("marshal registration email suffix whitelist: %w", err)
+		return nil, fmt.Errorf("marshal registration email suffix whitelist: %w", err)
 	}
 	updates[SettingKeyRegistrationEmailSuffixWhitelist] = string(registrationEmailSuffixWhitelistJSON)
 	updates[SettingKeyPromoCodeEnabled] = strconv.FormatBool(settings.PromoCodeEnabled)
@@ -471,6 +981,58 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 		updates[SettingKeyLinuxDoConnectClientSecret] = settings.LinuxDoConnectClientSecret
 	}
 
+	// Generic OIDC OAuth 登录
+	updates[SettingKeyOIDCConnectEnabled] = strconv.FormatBool(settings.OIDCConnectEnabled)
+	updates[SettingKeyOIDCConnectProviderName] = settings.OIDCConnectProviderName
+	updates[SettingKeyOIDCConnectClientID] = settings.OIDCConnectClientID
+	updates[SettingKeyOIDCConnectIssuerURL] = settings.OIDCConnectIssuerURL
+	updates[SettingKeyOIDCConnectDiscoveryURL] = settings.OIDCConnectDiscoveryURL
+	updates[SettingKeyOIDCConnectAuthorizeURL] = settings.OIDCConnectAuthorizeURL
+	updates[SettingKeyOIDCConnectTokenURL] = settings.OIDCConnectTokenURL
+	updates[SettingKeyOIDCConnectUserInfoURL] = settings.OIDCConnectUserInfoURL
+	updates[SettingKeyOIDCConnectJWKSURL] = settings.OIDCConnectJWKSURL
+	updates[SettingKeyOIDCConnectScopes] = settings.OIDCConnectScopes
+	updates[SettingKeyOIDCConnectRedirectURL] = settings.OIDCConnectRedirectURL
+	updates[SettingKeyOIDCConnectFrontendRedirectURL] = settings.OIDCConnectFrontendRedirectURL
+	updates[SettingKeyOIDCConnectTokenAuthMethod] = settings.OIDCConnectTokenAuthMethod
+	updates[SettingKeyOIDCConnectUsePKCE] = strconv.FormatBool(settings.OIDCConnectUsePKCE)
+	updates[SettingKeyOIDCConnectValidateIDToken] = strconv.FormatBool(settings.OIDCConnectValidateIDToken)
+	updates[SettingKeyOIDCConnectAllowedSigningAlgs] = settings.OIDCConnectAllowedSigningAlgs
+	updates[SettingKeyOIDCConnectClockSkewSeconds] = strconv.Itoa(settings.OIDCConnectClockSkewSeconds)
+	updates[SettingKeyOIDCConnectRequireEmailVerified] = strconv.FormatBool(settings.OIDCConnectRequireEmailVerified)
+	updates[SettingKeyOIDCConnectUserInfoEmailPath] = settings.OIDCConnectUserInfoEmailPath
+	updates[SettingKeyOIDCConnectUserInfoIDPath] = settings.OIDCConnectUserInfoIDPath
+	updates[SettingKeyOIDCConnectUserInfoUsernamePath] = settings.OIDCConnectUserInfoUsernamePath
+	if settings.OIDCConnectClientSecret != "" {
+		updates[SettingKeyOIDCConnectClientSecret] = settings.OIDCConnectClientSecret
+	}
+
+	// WeChat Connect OAuth 登录
+	updates[SettingKeyWeChatConnectEnabled] = strconv.FormatBool(settings.WeChatConnectEnabled)
+	updates[SettingKeyWeChatConnectAppID] = settings.WeChatConnectAppID
+	updates[SettingKeyWeChatConnectOpenAppID] = settings.WeChatConnectOpenAppID
+	updates[SettingKeyWeChatConnectMPAppID] = settings.WeChatConnectMPAppID
+	updates[SettingKeyWeChatConnectMobileAppID] = settings.WeChatConnectMobileAppID
+	updates[SettingKeyWeChatConnectOpenEnabled] = strconv.FormatBool(settings.WeChatConnectOpenEnabled)
+	updates[SettingKeyWeChatConnectMPEnabled] = strconv.FormatBool(settings.WeChatConnectMPEnabled)
+	updates[SettingKeyWeChatConnectMobileEnabled] = strconv.FormatBool(settings.WeChatConnectMobileEnabled)
+	updates[SettingKeyWeChatConnectMode] = settings.WeChatConnectMode
+	updates[SettingKeyWeChatConnectScopes] = settings.WeChatConnectScopes
+	updates[SettingKeyWeChatConnectRedirectURL] = settings.WeChatConnectRedirectURL
+	updates[SettingKeyWeChatConnectFrontendRedirectURL] = settings.WeChatConnectFrontendRedirectURL
+	if settings.WeChatConnectAppSecret != "" {
+		updates[SettingKeyWeChatConnectAppSecret] = settings.WeChatConnectAppSecret
+	}
+	if settings.WeChatConnectOpenAppSecret != "" {
+		updates[SettingKeyWeChatConnectOpenAppSecret] = settings.WeChatConnectOpenAppSecret
+	}
+	if settings.WeChatConnectMPAppSecret != "" {
+		updates[SettingKeyWeChatConnectMPAppSecret] = settings.WeChatConnectMPAppSecret
+	}
+	if settings.WeChatConnectMobileAppSecret != "" {
+		updates[SettingKeyWeChatConnectMobileAppSecret] = settings.WeChatConnectMobileAppSecret
+	}
+
 	// OEM设置
 	updates[SettingKeySiteName] = settings.SiteName
 	updates[SettingKeySiteLogo] = settings.SiteLogo
@@ -482,16 +1044,26 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	updates[SettingKeyHideCcsImportButton] = strconv.FormatBool(settings.HideCcsImportButton)
 	updates[SettingKeyPurchaseSubscriptionEnabled] = strconv.FormatBool(settings.PurchaseSubscriptionEnabled)
 	updates[SettingKeyPurchaseSubscriptionURL] = strings.TrimSpace(settings.PurchaseSubscriptionURL)
-	updates[SettingKeySoraClientEnabled] = strconv.FormatBool(settings.SoraClientEnabled)
+	tableDefaultPageSize, tablePageSizeOptions := normalizeTablePreferences(
+		settings.TableDefaultPageSize,
+		settings.TablePageSizeOptions,
+	)
+	updates[SettingKeyTableDefaultPageSize] = strconv.Itoa(tableDefaultPageSize)
+	tablePageSizeOptionsJSON, err := json.Marshal(tablePageSizeOptions)
+	if err != nil {
+		return nil, fmt.Errorf("marshal table page size options: %w", err)
+	}
+	updates[SettingKeyTablePageSizeOptions] = string(tablePageSizeOptionsJSON)
 	updates[SettingKeyCustomMenuItems] = settings.CustomMenuItems
 	updates[SettingKeyCustomEndpoints] = settings.CustomEndpoints
 
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
 	updates[SettingKeyDefaultBalance] = strconv.FormatFloat(settings.DefaultBalance, 'f', 8, 64)
+	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
-		return fmt.Errorf("marshal default subscriptions: %w", err)
+		return nil, fmt.Errorf("marshal default subscriptions: %w", err)
 	}
 	updates[SettingKeyDefaultSubscriptions] = string(defaultSubsJSON)
 
@@ -527,32 +1099,80 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	// Gateway forwarding behavior
 	updates[SettingKeyEnableFingerprintUnification] = strconv.FormatBool(settings.EnableFingerprintUnification)
 	updates[SettingKeyEnableMetadataPassthrough] = strconv.FormatBool(settings.EnableMetadataPassthrough)
+	updates[SettingKeyEnableCCHSigning] = strconv.FormatBool(settings.EnableCCHSigning)
+	updates[SettingPaymentVisibleMethodAlipaySource] = settings.PaymentVisibleMethodAlipaySource
+	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
+	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
+	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
+	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
 
-	err = s.settingRepo.SetMultiple(ctx, updates)
-	if err == nil {
-		// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
-		versionBoundsSF.Forget("version_bounds")
-		versionBoundsCache.Store(&cachedVersionBounds{
-			min:       settings.MinClaudeCodeVersion,
-			max:       settings.MaxClaudeCodeVersion,
-			expiresAt: time.Now().Add(versionBoundsCacheTTL).UnixNano(),
-		})
-		backendModeSF.Forget("backend_mode")
-		backendModeCache.Store(&cachedBackendMode{
-			value:     settings.BackendModeEnabled,
-			expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
-		})
-		gatewayForwardingSF.Forget("gateway_forwarding")
-		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
-			fingerprintUnification: settings.EnableFingerprintUnification,
-			metadataPassthrough:    settings.EnableMetadataPassthrough,
-			expiresAt:              time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
-		})
-		if s.onUpdate != nil {
-			s.onUpdate() // Invalidate cache after settings update
+	// Balance low notification
+	updates[SettingKeyBalanceLowNotifyEnabled] = strconv.FormatBool(settings.BalanceLowNotifyEnabled)
+	updates[SettingKeyBalanceLowNotifyThreshold] = strconv.FormatFloat(settings.BalanceLowNotifyThreshold, 'f', 8, 64)
+	updates[SettingKeyBalanceLowNotifyRechargeURL] = settings.BalanceLowNotifyRechargeURL
+	updates[SettingKeyAccountQuotaNotifyEnabled] = strconv.FormatBool(settings.AccountQuotaNotifyEnabled)
+	updates[SettingKeyAccountQuotaNotifyEmails] = MarshalNotifyEmails(settings.AccountQuotaNotifyEmails)
+
+	return updates, nil
+}
+
+func (s *SettingService) buildAuthSourceDefaultUpdates(ctx context.Context, settings *AuthSourceDefaultSettings) (map[string]string, error) {
+	if settings == nil {
+		return nil, nil
+	}
+
+	for _, subscriptions := range [][]DefaultSubscriptionSetting{
+		settings.Email.Subscriptions,
+		settings.LinuxDo.Subscriptions,
+		settings.OIDC.Subscriptions,
+		settings.WeChat.Subscriptions,
+	} {
+		if err := s.validateDefaultSubscriptionGroups(ctx, subscriptions); err != nil {
+			return nil, err
 		}
 	}
-	return err
+
+	updates := make(map[string]string, 21)
+	writeProviderDefaultGrantUpdates(updates, emailAuthSourceDefaultKeys, settings.Email)
+	writeProviderDefaultGrantUpdates(updates, linuxDoAuthSourceDefaultKeys, settings.LinuxDo)
+	writeProviderDefaultGrantUpdates(updates, oidcAuthSourceDefaultKeys, settings.OIDC)
+	writeProviderDefaultGrantUpdates(updates, weChatAuthSourceDefaultKeys, settings.WeChat)
+	updates[SettingKeyForceEmailOnThirdPartySignup] = strconv.FormatBool(settings.ForceEmailOnThirdPartySignup)
+	return updates, nil
+}
+
+func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
+	if settings == nil {
+		return
+	}
+
+	// 先使 inflight singleflight 失效，再刷新缓存，缩小旧值覆盖新值的竞态窗口
+	versionBoundsSF.Forget("version_bounds")
+	versionBoundsCache.Store(&cachedVersionBounds{
+		min:       settings.MinClaudeCodeVersion,
+		max:       settings.MaxClaudeCodeVersion,
+		expiresAt: time.Now().Add(versionBoundsCacheTTL).UnixNano(),
+	})
+	backendModeSF.Forget("backend_mode")
+	backendModeCache.Store(&cachedBackendMode{
+		value:     settings.BackendModeEnabled,
+		expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+	})
+	gatewayForwardingSF.Forget("gateway_forwarding")
+	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
+		fingerprintUnification: settings.EnableFingerprintUnification,
+		metadataPassthrough:    settings.EnableMetadataPassthrough,
+		cchSigning:             settings.EnableCCHSigning,
+		expiresAt:              time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
+	})
+	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
+	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
+		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
+		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
+	})
+	if s.onUpdate != nil {
+		s.onUpdate() // Invalidate cache after settings update
+	}
 }
 
 func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, items []DefaultSubscriptionSetting) error {
@@ -652,20 +1272,20 @@ func (s *SettingService) IsBackendModeEnabled(ctx context.Context) bool {
 
 // GetGatewayForwardingSettings returns cached gateway forwarding settings.
 // Uses in-process atomic.Value cache with 60s TTL, zero-lock hot path.
-// Returns (fingerprintUnification, metadataPassthrough).
-func (s *SettingService) GetGatewayForwardingSettings(ctx context.Context) (fingerprintUnification, metadataPassthrough bool) {
+// Returns (fingerprintUnification, metadataPassthrough, cchSigning).
+func (s *SettingService) GetGatewayForwardingSettings(ctx context.Context) (fingerprintUnification, metadataPassthrough, cchSigning bool) {
 	if cached, ok := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
 		if time.Now().UnixNano() < cached.expiresAt {
-			return cached.fingerprintUnification, cached.metadataPassthrough
+			return cached.fingerprintUnification, cached.metadataPassthrough, cached.cchSigning
 		}
 	}
 	type gwfResult struct {
-		fp, mp bool
+		fp, mp, cch bool
 	}
 	val, _, _ := gatewayForwardingSF.Do("gateway_forwarding", func() (any, error) {
 		if cached, ok := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings); ok && cached != nil {
 			if time.Now().UnixNano() < cached.expiresAt {
-				return gwfResult{cached.fingerprintUnification, cached.metadataPassthrough}, nil
+				return gwfResult{cached.fingerprintUnification, cached.metadataPassthrough, cached.cchSigning}, nil
 			}
 		}
 		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gatewayForwardingDBTimeout)
@@ -673,32 +1293,36 @@ func (s *SettingService) GetGatewayForwardingSettings(ctx context.Context) (fing
 		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
 			SettingKeyEnableFingerprintUnification,
 			SettingKeyEnableMetadataPassthrough,
+			SettingKeyEnableCCHSigning,
 		})
 		if err != nil {
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
 			gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 				fingerprintUnification: true,
 				metadataPassthrough:    false,
+				cchSigning:             false,
 				expiresAt:              time.Now().Add(gatewayForwardingErrorTTL).UnixNano(),
 			})
-			return gwfResult{true, false}, nil
+			return gwfResult{true, false, false}, nil
 		}
 		fp := true
 		if v, ok := values[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 			fp = v == "true"
 		}
 		mp := values[SettingKeyEnableMetadataPassthrough] == "true"
+		cch := values[SettingKeyEnableCCHSigning] == "true"
 		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 			fingerprintUnification: fp,
 			metadataPassthrough:    mp,
+			cchSigning:             cch,
 			expiresAt:              time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
 		})
-		return gwfResult{fp, mp}, nil
+		return gwfResult{fp, mp, cch}, nil
 	})
 	if r, ok := val.(gwfResult); ok {
-		return r.fp, r.mp
+		return r.fp, r.mp, r.cch
 	}
-	return true, false // fail-open defaults
+	return true, false, false // fail-open defaults
 }
 
 // IsEmailVerifyEnabled 检查是否开启邮件验证
@@ -799,6 +1423,18 @@ func (s *SettingService) GetDefaultBalance(ctx context.Context) float64 {
 	return s.cfg.Default.UserBalance
 }
 
+// GetDefaultUserRPMLimit 获取新用户默认 RPM 限制（0 = 不限制）。未配置则返回 0。
+func (s *SettingService) GetDefaultUserRPMLimit(ctx context.Context) int {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultUserRPMLimit)
+	if err != nil || value == "" {
+		return 0
+	}
+	if v, err := strconv.Atoi(value); err == nil && v >= 0 {
+		return v
+	}
+	return 0
+}
+
 // GetDefaultSubscriptions 获取新用户默认订阅配置列表。
 func (s *SettingService) GetDefaultSubscriptions(ctx context.Context) []DefaultSubscriptionSetting {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyDefaultSubscriptions)
@@ -806,6 +1442,88 @@ func (s *SettingService) GetDefaultSubscriptions(ctx context.Context) []DefaultS
 		return nil
 	}
 	return parseDefaultSubscriptions(value)
+}
+
+func (s *SettingService) GetAuthSourceDefaultSettings(ctx context.Context) (*AuthSourceDefaultSettings, error) {
+	keys := []string{
+		SettingKeyAuthSourceDefaultEmailBalance,
+		SettingKeyAuthSourceDefaultEmailConcurrency,
+		SettingKeyAuthSourceDefaultEmailSubscriptions,
+		SettingKeyAuthSourceDefaultEmailGrantOnSignup,
+		SettingKeyAuthSourceDefaultEmailGrantOnFirstBind,
+		SettingKeyAuthSourceDefaultLinuxDoBalance,
+		SettingKeyAuthSourceDefaultLinuxDoConcurrency,
+		SettingKeyAuthSourceDefaultLinuxDoSubscriptions,
+		SettingKeyAuthSourceDefaultLinuxDoGrantOnSignup,
+		SettingKeyAuthSourceDefaultLinuxDoGrantOnFirstBind,
+		SettingKeyAuthSourceDefaultOIDCBalance,
+		SettingKeyAuthSourceDefaultOIDCConcurrency,
+		SettingKeyAuthSourceDefaultOIDCSubscriptions,
+		SettingKeyAuthSourceDefaultOIDCGrantOnSignup,
+		SettingKeyAuthSourceDefaultOIDCGrantOnFirstBind,
+		SettingKeyAuthSourceDefaultWeChatBalance,
+		SettingKeyAuthSourceDefaultWeChatConcurrency,
+		SettingKeyAuthSourceDefaultWeChatSubscriptions,
+		SettingKeyAuthSourceDefaultWeChatGrantOnSignup,
+		SettingKeyAuthSourceDefaultWeChatGrantOnFirstBind,
+		SettingKeyForceEmailOnThirdPartySignup,
+	}
+
+	settings, err := s.settingRepo.GetMultiple(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("get auth source default settings: %w", err)
+	}
+
+	return &AuthSourceDefaultSettings{
+		Email:                        parseProviderDefaultGrantSettings(settings, emailAuthSourceDefaultKeys),
+		LinuxDo:                      parseProviderDefaultGrantSettings(settings, linuxDoAuthSourceDefaultKeys),
+		OIDC:                         parseProviderDefaultGrantSettings(settings, oidcAuthSourceDefaultKeys),
+		WeChat:                       parseProviderDefaultGrantSettings(settings, weChatAuthSourceDefaultKeys),
+		ForceEmailOnThirdPartySignup: settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
+	}, nil
+}
+
+func (s *SettingService) ResolveAuthSourceGrantSettings(ctx context.Context, signupSource string, firstBind bool) (ProviderDefaultGrantSettings, bool, error) {
+	result := ProviderDefaultGrantSettings{
+		Balance:       s.GetDefaultBalance(ctx),
+		Concurrency:   s.GetDefaultConcurrency(ctx),
+		Subscriptions: s.GetDefaultSubscriptions(ctx),
+	}
+
+	defaults, err := s.GetAuthSourceDefaultSettings(ctx)
+	if err != nil {
+		return result, false, err
+	}
+
+	providerDefaults, ok := authSourceSignupSettings(defaults, signupSource)
+	if !ok {
+		return result, false, nil
+	}
+
+	enabled := providerDefaults.GrantOnSignup
+	if firstBind {
+		enabled = providerDefaults.GrantOnFirstBind
+	}
+	if !enabled {
+		return result, false, nil
+	}
+
+	return mergeProviderDefaultGrantSettings(result, providerDefaults), true, nil
+}
+
+func (s *SettingService) UpdateAuthSourceDefaultSettings(ctx context.Context, settings *AuthSourceDefaultSettings) error {
+	updates, err := s.buildAuthSourceDefaultUpdates(ctx, settings)
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
+		return fmt.Errorf("update auth source default settings: %w", err)
+	}
+	return nil
 }
 
 // InitializeDefaultSettings 初始化默认设置
@@ -820,24 +1538,96 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		return fmt.Errorf("check existing settings: %w", err)
 	}
 
+	oidcUsePKCEDefault := true
+	oidcValidateIDTokenDefault := true
+	if s != nil && s.cfg != nil {
+		if s.cfg.OIDC.UsePKCEExplicit {
+			oidcUsePKCEDefault = s.cfg.OIDC.UsePKCE
+		}
+		if s.cfg.OIDC.ValidateIDTokenExplicit {
+			oidcValidateIDTokenDefault = s.cfg.OIDC.ValidateIDToken
+		}
+	}
+
 	// 初始化默认设置
 	defaults := map[string]string{
-		SettingKeyRegistrationEnabled:              "true",
-		SettingKeyEmailVerifyEnabled:               "false",
-		SettingKeyRegistrationEmailSuffixWhitelist: "[]",
-		SettingKeyPromoCodeEnabled:                 "true", // 默认启用优惠码功能
-		SettingKeySiteName:                         "Sub2API",
-		SettingKeySiteLogo:                         "",
-		SettingKeyPurchaseSubscriptionEnabled:      "false",
-		SettingKeyPurchaseSubscriptionURL:          "",
-		SettingKeySoraClientEnabled:                "false",
-		SettingKeyCustomMenuItems:                  "[]",
-		SettingKeyCustomEndpoints:                  "[]",
-		SettingKeyDefaultConcurrency:               strconv.Itoa(s.cfg.Default.UserConcurrency),
-		SettingKeyDefaultBalance:                   strconv.FormatFloat(s.cfg.Default.UserBalance, 'f', 8, 64),
-		SettingKeyDefaultSubscriptions:             "[]",
-		SettingKeySMTPPort:                         "587",
-		SettingKeySMTPUseTLS:                       "false",
+		SettingKeyRegistrationEnabled:                      "true",
+		SettingKeyEmailVerifyEnabled:                       "false",
+		SettingKeyRegistrationEmailSuffixWhitelist:         "[]",
+		SettingKeyPromoCodeEnabled:                         "true", // 默认启用优惠码功能
+		SettingKeySiteName:                                 "Sub2API",
+		SettingKeySiteLogo:                                 "",
+		SettingKeyPurchaseSubscriptionEnabled:              "false",
+		SettingKeyPurchaseSubscriptionURL:                  "",
+		SettingKeyTableDefaultPageSize:                     "20",
+		SettingKeyTablePageSizeOptions:                     "[10,20,50,100]",
+		SettingKeyCustomMenuItems:                          "[]",
+		SettingKeyCustomEndpoints:                          "[]",
+		SettingKeyWeChatConnectEnabled:                     "false",
+		SettingKeyWeChatConnectAppID:                       "",
+		SettingKeyWeChatConnectAppSecret:                   "",
+		SettingKeyWeChatConnectOpenAppID:                   "",
+		SettingKeyWeChatConnectOpenAppSecret:               "",
+		SettingKeyWeChatConnectMPAppID:                     "",
+		SettingKeyWeChatConnectMPAppSecret:                 "",
+		SettingKeyWeChatConnectMobileAppID:                 "",
+		SettingKeyWeChatConnectMobileAppSecret:             "",
+		SettingKeyWeChatConnectOpenEnabled:                 "false",
+		SettingKeyWeChatConnectMPEnabled:                   "false",
+		SettingKeyWeChatConnectMobileEnabled:               "false",
+		SettingKeyWeChatConnectMode:                        "open",
+		SettingKeyWeChatConnectScopes:                      "snsapi_login",
+		SettingKeyWeChatConnectRedirectURL:                 "",
+		SettingKeyWeChatConnectFrontendRedirectURL:         defaultWeChatConnectFrontend,
+		SettingKeyOIDCConnectEnabled:                       "false",
+		SettingKeyOIDCConnectProviderName:                  "OIDC",
+		SettingKeyOIDCConnectClientID:                      "",
+		SettingKeyOIDCConnectClientSecret:                  "",
+		SettingKeyOIDCConnectIssuerURL:                     "",
+		SettingKeyOIDCConnectDiscoveryURL:                  "",
+		SettingKeyOIDCConnectAuthorizeURL:                  "",
+		SettingKeyOIDCConnectTokenURL:                      "",
+		SettingKeyOIDCConnectUserInfoURL:                   "",
+		SettingKeyOIDCConnectJWKSURL:                       "",
+		SettingKeyOIDCConnectScopes:                        "openid email profile",
+		SettingKeyOIDCConnectRedirectURL:                   "",
+		SettingKeyOIDCConnectFrontendRedirectURL:           "/auth/oidc/callback",
+		SettingKeyOIDCConnectTokenAuthMethod:               "client_secret_post",
+		SettingKeyOIDCConnectUsePKCE:                       strconv.FormatBool(oidcUsePKCEDefault),
+		SettingKeyOIDCConnectValidateIDToken:               strconv.FormatBool(oidcValidateIDTokenDefault),
+		SettingKeyOIDCConnectAllowedSigningAlgs:            "RS256,ES256,PS256",
+		SettingKeyOIDCConnectClockSkewSeconds:              "120",
+		SettingKeyOIDCConnectRequireEmailVerified:          "false",
+		SettingKeyOIDCConnectUserInfoEmailPath:             "",
+		SettingKeyOIDCConnectUserInfoIDPath:                "",
+		SettingKeyOIDCConnectUserInfoUsernamePath:          "",
+		SettingKeyDefaultConcurrency:                       strconv.Itoa(s.cfg.Default.UserConcurrency),
+		SettingKeyDefaultBalance:                           strconv.FormatFloat(s.cfg.Default.UserBalance, 'f', 8, 64),
+		SettingKeyDefaultUserRPMLimit:                      "0",
+		SettingKeyDefaultSubscriptions:                     "[]",
+		SettingKeyAuthSourceDefaultEmailBalance:            "0",
+		SettingKeyAuthSourceDefaultEmailConcurrency:        "5",
+		SettingKeyAuthSourceDefaultEmailSubscriptions:      "[]",
+		SettingKeyAuthSourceDefaultEmailGrantOnSignup:      "false",
+		SettingKeyAuthSourceDefaultEmailGrantOnFirstBind:   "false",
+		SettingKeyAuthSourceDefaultLinuxDoBalance:          "0",
+		SettingKeyAuthSourceDefaultLinuxDoConcurrency:      "5",
+		SettingKeyAuthSourceDefaultLinuxDoSubscriptions:    "[]",
+		SettingKeyAuthSourceDefaultLinuxDoGrantOnSignup:    "false",
+		SettingKeyAuthSourceDefaultLinuxDoGrantOnFirstBind: "false",
+		SettingKeyAuthSourceDefaultOIDCBalance:             "0",
+		SettingKeyAuthSourceDefaultOIDCConcurrency:         "5",
+		SettingKeyAuthSourceDefaultOIDCSubscriptions:       "[]",
+		SettingKeyAuthSourceDefaultOIDCGrantOnSignup:       "false",
+		SettingKeyAuthSourceDefaultOIDCGrantOnFirstBind:    "false",
+		SettingKeyAuthSourceDefaultWeChatBalance:           "0",
+		SettingKeyAuthSourceDefaultWeChatConcurrency:       "5",
+		SettingKeyAuthSourceDefaultWeChatSubscriptions:     "[]",
+		SettingKeyAuthSourceDefaultWeChatGrantOnSignup:     "false",
+		SettingKeyAuthSourceDefaultWeChatGrantOnFirstBind:  "false",
+		SettingKeyForceEmailOnThirdPartySignup:             "false",
+		SettingKeySMTPPort:                                 "587",
+		SettingKeySMTPUseTLS:                               "false",
 		// Model fallback defaults
 		SettingKeyEnableModelFallback:      "false",
 		SettingKeyFallbackModelAnthropic:   "claude-3-5-sonnet-20241022",
@@ -859,7 +1649,12 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyMaxClaudeCodeVersion: "",
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling: "false",
+		SettingKeyAllowUngroupedKeyScheduling:    "false",
+		SettingPaymentVisibleMethodAlipaySource:  "",
+		SettingPaymentVisibleMethodWxpaySource:   "",
+		SettingPaymentVisibleMethodAlipayEnabled: "false",
+		SettingPaymentVisibleMethodWxpayEnabled:  "false",
+		openAIAdvancedSchedulerSettingKey:        "false",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -896,11 +1691,14 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
 		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
 		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
 		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
 		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}
+	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
+		settings[SettingKeyTableDefaultPageSize],
+		settings[SettingKeyTablePageSizeOptions],
+	)
 
 	// 解析整数类型
 	if port, err := strconv.Atoi(settings[SettingKeySMTPPort]); err == nil {
@@ -913,6 +1711,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.DefaultConcurrency = concurrency
 	} else {
 		result.DefaultConcurrency = s.cfg.Default.UserConcurrency
+	}
+
+	if rpm, err := strconv.Atoi(settings[SettingKeyDefaultUserRPMLimit]); err == nil && rpm >= 0 {
+		result.DefaultUserRPMLimit = rpm
 	}
 
 	// 解析浮点数类型
@@ -959,6 +1761,163 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.LinuxDoConnectClientSecretConfigured = result.LinuxDoConnectClientSecret != ""
 
+	// Generic OIDC 设置：
+	// - 兼容 config.yaml/env
+	// - 支持后台系统设置覆盖并持久化（存储于 DB）
+	oidcBase := config.OIDCConnectConfig{}
+	if s.cfg != nil {
+		oidcBase = s.cfg.OIDC
+	}
+
+	if raw, ok := settings[SettingKeyOIDCConnectEnabled]; ok {
+		result.OIDCConnectEnabled = raw == "true"
+	} else {
+		result.OIDCConnectEnabled = oidcBase.Enabled
+	}
+
+	if v, ok := settings[SettingKeyOIDCConnectProviderName]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectProviderName = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectProviderName = strings.TrimSpace(oidcBase.ProviderName)
+	}
+	if result.OIDCConnectProviderName == "" {
+		result.OIDCConnectProviderName = "OIDC"
+	}
+
+	if v, ok := settings[SettingKeyOIDCConnectClientID]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectClientID = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectClientID = strings.TrimSpace(oidcBase.ClientID)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectIssuerURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectIssuerURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectIssuerURL = strings.TrimSpace(oidcBase.IssuerURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectDiscoveryURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectDiscoveryURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectDiscoveryURL = strings.TrimSpace(oidcBase.DiscoveryURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectAuthorizeURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectAuthorizeURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectAuthorizeURL = strings.TrimSpace(oidcBase.AuthorizeURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectTokenURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectTokenURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectTokenURL = strings.TrimSpace(oidcBase.TokenURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectUserInfoURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectUserInfoURL = strings.TrimSpace(oidcBase.UserInfoURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectJWKSURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectJWKSURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectJWKSURL = strings.TrimSpace(oidcBase.JWKSURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectScopes]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectScopes = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectScopes = strings.TrimSpace(oidcBase.Scopes)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectRedirectURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectRedirectURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectRedirectURL = strings.TrimSpace(oidcBase.RedirectURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectFrontendRedirectURL]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectFrontendRedirectURL = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectFrontendRedirectURL = strings.TrimSpace(oidcBase.FrontendRedirectURL)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectTokenAuthMethod]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectTokenAuthMethod = strings.ToLower(strings.TrimSpace(v))
+	} else {
+		result.OIDCConnectTokenAuthMethod = strings.ToLower(strings.TrimSpace(oidcBase.TokenAuthMethod))
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectUsePKCE]; ok {
+		result.OIDCConnectUsePKCE = raw == "true"
+	} else {
+		result.OIDCConnectUsePKCE = oidcUsePKCECompatibilityDefault(oidcBase)
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectValidateIDToken]; ok {
+		result.OIDCConnectValidateIDToken = raw == "true"
+	} else {
+		result.OIDCConnectValidateIDToken = oidcValidateIDTokenCompatibilityDefault(oidcBase)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectAllowedSigningAlgs]; ok && strings.TrimSpace(v) != "" {
+		result.OIDCConnectAllowedSigningAlgs = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectAllowedSigningAlgs = strings.TrimSpace(oidcBase.AllowedSigningAlgs)
+	}
+	clockSkewSet := false
+	if raw, ok := settings[SettingKeyOIDCConnectClockSkewSeconds]; ok && strings.TrimSpace(raw) != "" {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+			result.OIDCConnectClockSkewSeconds = parsed
+			clockSkewSet = true
+		}
+	}
+	if !clockSkewSet {
+		result.OIDCConnectClockSkewSeconds = oidcBase.ClockSkewSeconds
+	}
+	if !clockSkewSet && result.OIDCConnectClockSkewSeconds == 0 {
+		result.OIDCConnectClockSkewSeconds = 120
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectRequireEmailVerified]; ok {
+		result.OIDCConnectRequireEmailVerified = raw == "true"
+	} else {
+		result.OIDCConnectRequireEmailVerified = oidcBase.RequireEmailVerified
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoEmailPath]; ok {
+		result.OIDCConnectUserInfoEmailPath = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectUserInfoEmailPath = strings.TrimSpace(oidcBase.UserInfoEmailPath)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoIDPath]; ok {
+		result.OIDCConnectUserInfoIDPath = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectUserInfoIDPath = strings.TrimSpace(oidcBase.UserInfoIDPath)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoUsernamePath]; ok {
+		result.OIDCConnectUserInfoUsernamePath = strings.TrimSpace(v)
+	} else {
+		result.OIDCConnectUserInfoUsernamePath = strings.TrimSpace(oidcBase.UserInfoUsernamePath)
+	}
+	result.OIDCConnectClientSecret = strings.TrimSpace(settings[SettingKeyOIDCConnectClientSecret])
+	if result.OIDCConnectClientSecret == "" {
+		result.OIDCConnectClientSecret = strings.TrimSpace(oidcBase.ClientSecret)
+	}
+	result.OIDCConnectClientSecretConfigured = result.OIDCConnectClientSecret != ""
+
+	// WeChat Connect 设置：
+	// - 优先读取 DB 系统设置
+	// - 缺失时回退到 config/env，保持升级兼容
+	weChatEffective := s.effectiveWeChatConnectOAuthConfig(settings)
+	result.WeChatConnectEnabled = weChatEffective.Enabled
+	result.WeChatConnectAppID = weChatEffective.LegacyAppID
+	result.WeChatConnectAppSecret = weChatEffective.LegacyAppSecret
+	result.WeChatConnectAppSecretConfigured = weChatEffective.LegacyAppSecret != ""
+	result.WeChatConnectOpenAppID = weChatEffective.OpenAppID
+	result.WeChatConnectOpenAppSecret = weChatEffective.OpenAppSecret
+	result.WeChatConnectOpenAppSecretConfigured = weChatEffective.OpenAppSecret != ""
+	result.WeChatConnectMPAppID = weChatEffective.MPAppID
+	result.WeChatConnectMPAppSecret = weChatEffective.MPAppSecret
+	result.WeChatConnectMPAppSecretConfigured = weChatEffective.MPAppSecret != ""
+	result.WeChatConnectMobileAppID = weChatEffective.MobileAppID
+	result.WeChatConnectMobileAppSecret = weChatEffective.MobileAppSecret
+	result.WeChatConnectMobileAppSecretConfigured = weChatEffective.MobileAppSecret != ""
+	result.WeChatConnectOpenEnabled = weChatEffective.OpenEnabled
+	result.WeChatConnectMPEnabled = weChatEffective.MPEnabled
+	result.WeChatConnectMobileEnabled = weChatEffective.MobileEnabled
+	result.WeChatConnectMode = weChatEffective.Mode
+	result.WeChatConnectScopes = weChatEffective.Scopes
+	result.WeChatConnectRedirectURL = weChatEffective.RedirectURL
+	result.WeChatConnectFrontendRedirectURL = weChatEffective.FrontendRedirectURL
+
 	// Model fallback settings
 	result.EnableModelFallback = settings[SettingKeyEnableModelFallback] == "true"
 	result.FallbackModelAnthropic = s.getStringOrDefault(settings, SettingKeyFallbackModelAnthropic, "claude-3-5-sonnet-20241022")
@@ -998,13 +1957,43 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// 分组隔离
 	result.AllowUngroupedKeyScheduling = settings[SettingKeyAllowUngroupedKeyScheduling] == "true"
 
-	// Gateway forwarding behavior (defaults: fingerprint=true, metadata_passthrough=false)
+	// Gateway forwarding behavior (defaults: fingerprint=true, metadata_passthrough=false, cch_signing=false)
 	if v, ok := settings[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 		result.EnableFingerprintUnification = v == "true"
 	} else {
 		result.EnableFingerprintUnification = true // default: enabled (current behavior)
 	}
 	result.EnableMetadataPassthrough = settings[SettingKeyEnableMetadataPassthrough] == "true"
+	result.EnableCCHSigning = settings[SettingKeyEnableCCHSigning] == "true"
+
+	// Web search emulation: quick enabled check from the JSON config
+	if raw := settings[SettingKeyWebSearchEmulationConfig]; raw != "" {
+		var wsCfg WebSearchEmulationConfig
+		if err := json.Unmarshal([]byte(raw), &wsCfg); err == nil {
+			result.WebSearchEmulationEnabled = wsCfg.Enabled && len(wsCfg.Providers) > 0
+		}
+	}
+	result.PaymentVisibleMethodAlipaySource = NormalizeVisibleMethodSource("alipay", settings[SettingPaymentVisibleMethodAlipaySource])
+	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
+	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
+	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
+	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
+
+	// Balance low notification
+	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"
+	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
+		result.BalanceLowNotifyThreshold = v
+	}
+	result.BalanceLowNotifyRechargeURL = settings[SettingKeyBalanceLowNotifyRechargeURL]
+
+	// Account quota notification
+	result.AccountQuotaNotifyEnabled = settings[SettingKeyAccountQuotaNotifyEnabled] == "true"
+	if raw := strings.TrimSpace(settings[SettingKeyAccountQuotaNotifyEmails]); raw != "" {
+		result.AccountQuotaNotifyEmails = ParseNotifyEmails(raw)
+	}
+	if result.AccountQuotaNotifyEmails == nil {
+		result.AccountQuotaNotifyEmails = []NotifyEmailEntry{}
+	}
 
 	return result
 }
@@ -1016,6 +2005,23 @@ func isFalseSettingValue(value string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeVisibleMethodSettingSource(method, source string, enabled bool) (string, error) {
+	_ = enabled
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "", nil
+	}
+
+	normalized := NormalizeVisibleMethodSource(method, source)
+	if normalized == "" {
+		return "", infraerrors.BadRequest(
+			"INVALID_PAYMENT_VISIBLE_METHOD_SOURCE",
+			fmt.Sprintf("%s source must be one of the supported payment providers", method),
+		)
+	}
+	return normalized, nil
 }
 
 func parseDefaultSubscriptions(raw string) []DefaultSubscriptionSetting {
@@ -1041,6 +2047,117 @@ func parseDefaultSubscriptions(raw string) []DefaultSubscriptionSetting {
 	}
 
 	return normalized
+}
+
+func parseProviderDefaultGrantSettings(settings map[string]string, keys authSourceDefaultKeySet) ProviderDefaultGrantSettings {
+	result := ProviderDefaultGrantSettings{
+		Balance:          defaultAuthSourceBalance,
+		Concurrency:      defaultAuthSourceConcurrency,
+		Subscriptions:    []DefaultSubscriptionSetting{},
+		GrantOnSignup:    false,
+		GrantOnFirstBind: false,
+	}
+
+	if v, err := strconv.ParseFloat(strings.TrimSpace(settings[keys.balance]), 64); err == nil {
+		result.Balance = v
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(settings[keys.concurrency])); err == nil {
+		result.Concurrency = v
+	}
+	if items := parseDefaultSubscriptions(settings[keys.subscriptions]); items != nil {
+		result.Subscriptions = items
+	}
+	if raw, ok := settings[keys.grantOnSignup]; ok {
+		result.GrantOnSignup = raw == "true"
+	}
+	if raw, ok := settings[keys.grantOnFirstBind]; ok {
+		result.GrantOnFirstBind = raw == "true"
+	}
+
+	return result
+}
+
+func writeProviderDefaultGrantUpdates(updates map[string]string, keys authSourceDefaultKeySet, settings ProviderDefaultGrantSettings) {
+	updates[keys.balance] = strconv.FormatFloat(settings.Balance, 'f', 8, 64)
+	updates[keys.concurrency] = strconv.Itoa(settings.Concurrency)
+
+	subscriptions := settings.Subscriptions
+	if subscriptions == nil {
+		subscriptions = []DefaultSubscriptionSetting{}
+	}
+	raw, err := json.Marshal(subscriptions)
+	if err != nil {
+		raw = []byte("[]")
+	}
+	updates[keys.subscriptions] = string(raw)
+	updates[keys.grantOnSignup] = strconv.FormatBool(settings.GrantOnSignup)
+	updates[keys.grantOnFirstBind] = strconv.FormatBool(settings.GrantOnFirstBind)
+}
+
+func mergeProviderDefaultGrantSettings(globalDefaults ProviderDefaultGrantSettings, providerDefaults ProviderDefaultGrantSettings) ProviderDefaultGrantSettings {
+	result := ProviderDefaultGrantSettings{
+		Balance:          globalDefaults.Balance,
+		Concurrency:      globalDefaults.Concurrency,
+		Subscriptions:    append([]DefaultSubscriptionSetting(nil), globalDefaults.Subscriptions...),
+		GrantOnSignup:    providerDefaults.GrantOnSignup,
+		GrantOnFirstBind: providerDefaults.GrantOnFirstBind,
+	}
+
+	if providerDefaults.Balance != defaultAuthSourceBalance {
+		result.Balance = providerDefaults.Balance
+	}
+	if providerDefaults.Concurrency > 0 && providerDefaults.Concurrency != defaultAuthSourceConcurrency {
+		result.Concurrency = providerDefaults.Concurrency
+	}
+	if len(providerDefaults.Subscriptions) > 0 {
+		result.Subscriptions = append([]DefaultSubscriptionSetting(nil), providerDefaults.Subscriptions...)
+	}
+
+	return result
+}
+
+func parseTablePreferences(defaultPageSizeRaw, optionsRaw string) (int, []int) {
+	defaultPageSize := 20
+	if v, err := strconv.Atoi(strings.TrimSpace(defaultPageSizeRaw)); err == nil {
+		defaultPageSize = v
+	}
+
+	var options []int
+	if strings.TrimSpace(optionsRaw) != "" {
+		_ = json.Unmarshal([]byte(optionsRaw), &options)
+	}
+
+	return normalizeTablePreferences(defaultPageSize, options)
+}
+
+func normalizeTablePreferences(defaultPageSize int, options []int) (int, []int) {
+	const minPageSize = 5
+	const maxPageSize = 1000
+	const fallbackPageSize = 20
+
+	seen := make(map[int]struct{}, len(options))
+	normalizedOptions := make([]int, 0, len(options))
+	for _, option := range options {
+		if option < minPageSize || option > maxPageSize {
+			continue
+		}
+		if _, ok := seen[option]; ok {
+			continue
+		}
+		seen[option] = struct{}{}
+		normalizedOptions = append(normalizedOptions, option)
+	}
+	sort.Ints(normalizedOptions)
+
+	if defaultPageSize < minPageSize || defaultPageSize > maxPageSize {
+		defaultPageSize = fallbackPageSize
+	}
+
+	if len(normalizedOptions) == 0 {
+		normalizedOptions = []int{10, 20, 50}
+	}
+
+	return defaultPageSize, normalizedOptions
 }
 
 // getStringOrDefault 获取字符串值或默认值
@@ -1221,7 +2338,6 @@ func (s *SettingService) GetLinuxDoConnectOAuthConfig(ctx context.Context) (conf
 	if v, ok := settings[SettingKeyLinuxDoConnectRedirectURL]; ok && strings.TrimSpace(v) != "" {
 		effective.RedirectURL = strings.TrimSpace(v)
 	}
-
 	if !effective.Enabled {
 		return config.LinuxDoConnectConfig{}, infraerrors.NotFound("OAUTH_DISABLED", "oauth login is disabled")
 	}
@@ -1269,14 +2385,40 @@ func (s *SettingService) GetLinuxDoConnectOAuthConfig(ctx context.Context) (conf
 			return config.LinuxDoConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth client secret not configured")
 		}
 	case "none":
-		if !effective.UsePKCE {
-			return config.LinuxDoConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth pkce must be enabled when token_auth_method=none")
-		}
 	default:
 		return config.LinuxDoConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth token_auth_method invalid")
 	}
 
 	return effective, nil
+}
+
+// GetWeChatConnectOAuthConfig 返回用于登录的最终生效 WeChat Connect 配置。
+//
+// WeChat Connect 已回归 DB 系统设置模型，不再回退到 config/env。
+func (s *SettingService) GetWeChatConnectOAuthConfig(ctx context.Context) (WeChatConnectOAuthConfig, error) {
+	keys := []string{
+		SettingKeyWeChatConnectEnabled,
+		SettingKeyWeChatConnectAppID,
+		SettingKeyWeChatConnectAppSecret,
+		SettingKeyWeChatConnectOpenAppID,
+		SettingKeyWeChatConnectOpenAppSecret,
+		SettingKeyWeChatConnectMPAppID,
+		SettingKeyWeChatConnectMPAppSecret,
+		SettingKeyWeChatConnectMobileAppID,
+		SettingKeyWeChatConnectMobileAppSecret,
+		SettingKeyWeChatConnectOpenEnabled,
+		SettingKeyWeChatConnectMPEnabled,
+		SettingKeyWeChatConnectMobileEnabled,
+		SettingKeyWeChatConnectMode,
+		SettingKeyWeChatConnectScopes,
+		SettingKeyWeChatConnectRedirectURL,
+		SettingKeyWeChatConnectFrontendRedirectURL,
+	}
+	settings, err := s.settingRepo.GetMultiple(ctx, keys)
+	if err != nil {
+		return WeChatConnectOAuthConfig{}, fmt.Errorf("get wechat connect settings: %w", err)
+	}
+	return s.parseWeChatConnectOAuthConfig(settings)
 }
 
 // GetOverloadCooldownSettings 获取529过载冷却配置
@@ -1328,6 +2470,283 @@ func (s *SettingService) SetOverloadCooldownSettings(ctx context.Context, settin
 	}
 
 	return s.settingRepo.Set(ctx, SettingKeyOverloadCooldownSettings, string(data))
+}
+
+// GetOIDCConnectOAuthConfig 返回用于登录的“最终生效” OIDC 配置。
+//
+// 优先级：
+// - 若对应系统设置键存在，则覆盖 config.yaml/env 的值
+// - 否则回退到 config.yaml/env 的值
+func (s *SettingService) GetOIDCConnectOAuthConfig(ctx context.Context) (config.OIDCConnectConfig, error) {
+	if s == nil || s.cfg == nil {
+		return config.OIDCConnectConfig{}, infraerrors.ServiceUnavailable("CONFIG_NOT_READY", "config not loaded")
+	}
+
+	effective := s.cfg.OIDC
+
+	keys := []string{
+		SettingKeyOIDCConnectEnabled,
+		SettingKeyOIDCConnectProviderName,
+		SettingKeyOIDCConnectClientID,
+		SettingKeyOIDCConnectClientSecret,
+		SettingKeyOIDCConnectIssuerURL,
+		SettingKeyOIDCConnectDiscoveryURL,
+		SettingKeyOIDCConnectAuthorizeURL,
+		SettingKeyOIDCConnectTokenURL,
+		SettingKeyOIDCConnectUserInfoURL,
+		SettingKeyOIDCConnectJWKSURL,
+		SettingKeyOIDCConnectScopes,
+		SettingKeyOIDCConnectRedirectURL,
+		SettingKeyOIDCConnectFrontendRedirectURL,
+		SettingKeyOIDCConnectTokenAuthMethod,
+		SettingKeyOIDCConnectUsePKCE,
+		SettingKeyOIDCConnectValidateIDToken,
+		SettingKeyOIDCConnectAllowedSigningAlgs,
+		SettingKeyOIDCConnectClockSkewSeconds,
+		SettingKeyOIDCConnectRequireEmailVerified,
+		SettingKeyOIDCConnectUserInfoEmailPath,
+		SettingKeyOIDCConnectUserInfoIDPath,
+		SettingKeyOIDCConnectUserInfoUsernamePath,
+	}
+	settings, err := s.settingRepo.GetMultiple(ctx, keys)
+	if err != nil {
+		return config.OIDCConnectConfig{}, fmt.Errorf("get oidc connect settings: %w", err)
+	}
+
+	if raw, ok := settings[SettingKeyOIDCConnectEnabled]; ok {
+		effective.Enabled = raw == "true"
+	}
+	if v, ok := settings[SettingKeyOIDCConnectProviderName]; ok && strings.TrimSpace(v) != "" {
+		effective.ProviderName = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectClientID]; ok && strings.TrimSpace(v) != "" {
+		effective.ClientID = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectClientSecret]; ok && strings.TrimSpace(v) != "" {
+		effective.ClientSecret = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectIssuerURL]; ok && strings.TrimSpace(v) != "" {
+		effective.IssuerURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectDiscoveryURL]; ok && strings.TrimSpace(v) != "" {
+		effective.DiscoveryURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectAuthorizeURL]; ok && strings.TrimSpace(v) != "" {
+		effective.AuthorizeURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectTokenURL]; ok && strings.TrimSpace(v) != "" {
+		effective.TokenURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoURL]; ok && strings.TrimSpace(v) != "" {
+		effective.UserInfoURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectJWKSURL]; ok && strings.TrimSpace(v) != "" {
+		effective.JWKSURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectScopes]; ok && strings.TrimSpace(v) != "" {
+		effective.Scopes = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectRedirectURL]; ok && strings.TrimSpace(v) != "" {
+		effective.RedirectURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectFrontendRedirectURL]; ok && strings.TrimSpace(v) != "" {
+		effective.FrontendRedirectURL = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectTokenAuthMethod]; ok && strings.TrimSpace(v) != "" {
+		effective.TokenAuthMethod = strings.ToLower(strings.TrimSpace(v))
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectUsePKCE]; ok {
+		effective.UsePKCE = raw == "true"
+	} else {
+		effective.UsePKCE = oidcUsePKCECompatibilityDefault(effective)
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectValidateIDToken]; ok {
+		effective.ValidateIDToken = raw == "true"
+	} else {
+		effective.ValidateIDToken = oidcValidateIDTokenCompatibilityDefault(effective)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectAllowedSigningAlgs]; ok && strings.TrimSpace(v) != "" {
+		effective.AllowedSigningAlgs = strings.TrimSpace(v)
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectClockSkewSeconds]; ok && strings.TrimSpace(raw) != "" {
+		if parsed, parseErr := strconv.Atoi(strings.TrimSpace(raw)); parseErr == nil {
+			effective.ClockSkewSeconds = parsed
+		}
+	}
+	if raw, ok := settings[SettingKeyOIDCConnectRequireEmailVerified]; ok {
+		effective.RequireEmailVerified = raw == "true"
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoEmailPath]; ok {
+		effective.UserInfoEmailPath = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoIDPath]; ok {
+		effective.UserInfoIDPath = strings.TrimSpace(v)
+	}
+	if v, ok := settings[SettingKeyOIDCConnectUserInfoUsernamePath]; ok {
+		effective.UserInfoUsernamePath = strings.TrimSpace(v)
+	}
+
+	if !effective.Enabled {
+		return config.OIDCConnectConfig{}, infraerrors.NotFound("OAUTH_DISABLED", "oauth login is disabled")
+	}
+	if strings.TrimSpace(effective.ProviderName) == "" {
+		effective.ProviderName = "OIDC"
+	}
+	if strings.TrimSpace(effective.ClientID) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth client id not configured")
+	}
+	if strings.TrimSpace(effective.IssuerURL) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth issuer url not configured")
+	}
+	if strings.TrimSpace(effective.RedirectURL) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth redirect url not configured")
+	}
+	if strings.TrimSpace(effective.FrontendRedirectURL) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth frontend redirect url not configured")
+	}
+	if !scopesContainOpenID(effective.Scopes) {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth scopes must contain openid")
+	}
+	if effective.ClockSkewSeconds < 0 || effective.ClockSkewSeconds > 600 {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth clock skew must be between 0 and 600")
+	}
+
+	if err := config.ValidateAbsoluteHTTPURL(effective.IssuerURL); err != nil {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth issuer url invalid")
+	}
+
+	discoveryURL := strings.TrimSpace(effective.DiscoveryURL)
+	if discoveryURL == "" {
+		discoveryURL = oidcDefaultDiscoveryURL(effective.IssuerURL)
+		effective.DiscoveryURL = discoveryURL
+	}
+	if discoveryURL != "" {
+		if err := config.ValidateAbsoluteHTTPURL(discoveryURL); err != nil {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth discovery url invalid")
+		}
+	}
+
+	needsDiscovery := strings.TrimSpace(effective.AuthorizeURL) == "" ||
+		strings.TrimSpace(effective.TokenURL) == "" ||
+		(effective.ValidateIDToken && strings.TrimSpace(effective.JWKSURL) == "")
+	if needsDiscovery && discoveryURL != "" {
+		metadata, resolveErr := oidcResolveProviderMetadata(ctx, discoveryURL)
+		if resolveErr != nil {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth discovery resolve failed").WithCause(resolveErr)
+		}
+		if strings.TrimSpace(effective.AuthorizeURL) == "" {
+			effective.AuthorizeURL = strings.TrimSpace(metadata.AuthorizationEndpoint)
+		}
+		if strings.TrimSpace(effective.TokenURL) == "" {
+			effective.TokenURL = strings.TrimSpace(metadata.TokenEndpoint)
+		}
+		if strings.TrimSpace(effective.UserInfoURL) == "" {
+			effective.UserInfoURL = strings.TrimSpace(metadata.UserInfoEndpoint)
+		}
+		if strings.TrimSpace(effective.JWKSURL) == "" {
+			effective.JWKSURL = strings.TrimSpace(metadata.JWKSURI)
+		}
+	}
+
+	if strings.TrimSpace(effective.AuthorizeURL) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth authorize url not configured")
+	}
+	if strings.TrimSpace(effective.TokenURL) == "" {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth token url not configured")
+	}
+	if err := config.ValidateAbsoluteHTTPURL(effective.AuthorizeURL); err != nil {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth authorize url invalid")
+	}
+	if err := config.ValidateAbsoluteHTTPURL(effective.TokenURL); err != nil {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth token url invalid")
+	}
+	if v := strings.TrimSpace(effective.UserInfoURL); v != "" {
+		if err := config.ValidateAbsoluteHTTPURL(v); err != nil {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth userinfo url invalid")
+		}
+	}
+	if effective.ValidateIDToken {
+		if strings.TrimSpace(effective.JWKSURL) == "" {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth jwks url not configured")
+		}
+		if strings.TrimSpace(effective.AllowedSigningAlgs) == "" {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth signing algs not configured")
+		}
+	}
+	if v := strings.TrimSpace(effective.JWKSURL); v != "" {
+		if err := config.ValidateAbsoluteHTTPURL(v); err != nil {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth jwks url invalid")
+		}
+	}
+	if err := config.ValidateAbsoluteHTTPURL(effective.RedirectURL); err != nil {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth redirect url invalid")
+	}
+	if err := config.ValidateFrontendRedirectURL(effective.FrontendRedirectURL); err != nil {
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth frontend redirect url invalid")
+	}
+
+	method := strings.ToLower(strings.TrimSpace(effective.TokenAuthMethod))
+	switch method {
+	case "", "client_secret_post", "client_secret_basic":
+		if strings.TrimSpace(effective.ClientSecret) == "" {
+			return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth client secret not configured")
+		}
+	case "none":
+	default:
+		return config.OIDCConnectConfig{}, infraerrors.InternalServer("OAUTH_CONFIG_INVALID", "oauth token_auth_method invalid")
+	}
+
+	return effective, nil
+}
+
+func scopesContainOpenID(scopes string) bool {
+	for _, scope := range strings.Fields(strings.ToLower(strings.TrimSpace(scopes))) {
+		if scope == "openid" {
+			return true
+		}
+	}
+	return false
+}
+
+type oidcProviderMetadata struct {
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	UserInfoEndpoint      string `json:"userinfo_endpoint"`
+	JWKSURI               string `json:"jwks_uri"`
+}
+
+func oidcDefaultDiscoveryURL(issuerURL string) string {
+	issuerURL = strings.TrimSpace(issuerURL)
+	if issuerURL == "" {
+		return ""
+	}
+	return strings.TrimRight(issuerURL, "/") + "/.well-known/openid-configuration"
+}
+
+func oidcResolveProviderMetadata(ctx context.Context, discoveryURL string) (*oidcProviderMetadata, error) {
+	discoveryURL = strings.TrimSpace(discoveryURL)
+	if discoveryURL == "" {
+		return nil, fmt.Errorf("discovery url is empty")
+	}
+
+	resp, err := req.C().
+		SetTimeout(15*time.Second).
+		R().
+		SetContext(ctx).
+		SetHeader("Accept", "application/json").
+		Get(discoveryURL)
+	if err != nil {
+		return nil, fmt.Errorf("request discovery document: %w", err)
+	}
+	if !resp.IsSuccessState() {
+		return nil, fmt.Errorf("discovery request failed: status=%d", resp.StatusCode)
+	}
+
+	metadata := &oidcProviderMetadata{}
+	if err := json.Unmarshal(resp.Bytes(), metadata); err != nil {
+		return nil, fmt.Errorf("parse discovery document: %w", err)
+	}
+	return metadata, nil
 }
 
 // GetStreamTimeoutSettings 获取流超时处理配置
@@ -1542,6 +2961,18 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 		if !validScopes[rule.Scope] {
 			return fmt.Errorf("rule[%d]: invalid scope %q", i, rule.Scope)
 		}
+		// Validate model_whitelist patterns
+		for j, pattern := range rule.ModelWhitelist {
+			trimmed := strings.TrimSpace(pattern)
+			if trimmed == "" {
+				return fmt.Errorf("rule[%d]: model_whitelist[%d] cannot be empty", i, j)
+			}
+			settings.Rules[i].ModelWhitelist[j] = trimmed
+		}
+		// Validate fallback_action
+		if rule.FallbackAction != "" && !validActions[rule.FallbackAction] {
+			return fmt.Errorf("rule[%d]: invalid fallback_action %q", i, rule.FallbackAction)
+		}
 	}
 
 	data, err := json.Marshal(settings)
@@ -1582,608 +3013,4 @@ func (s *SettingService) SetStreamTimeoutSettings(ctx context.Context, settings 
 	}
 
 	return s.settingRepo.Set(ctx, SettingKeyStreamTimeoutSettings, string(data))
-}
-
-type soraS3ProfilesStore struct {
-	ActiveProfileID string                   `json:"active_profile_id"`
-	Items           []soraS3ProfileStoreItem `json:"items"`
-}
-
-type soraS3ProfileStoreItem struct {
-	ProfileID                string `json:"profile_id"`
-	Name                     string `json:"name"`
-	Enabled                  bool   `json:"enabled"`
-	Endpoint                 string `json:"endpoint"`
-	Region                   string `json:"region"`
-	Bucket                   string `json:"bucket"`
-	AccessKeyID              string `json:"access_key_id"`
-	SecretAccessKey          string `json:"secret_access_key"`
-	Prefix                   string `json:"prefix"`
-	ForcePathStyle           bool   `json:"force_path_style"`
-	CDNURL                   string `json:"cdn_url"`
-	DefaultStorageQuotaBytes int64  `json:"default_storage_quota_bytes"`
-	UpdatedAt                string `json:"updated_at"`
-}
-
-// GetSoraS3Settings 获取 Sora S3 存储配置（兼容旧单配置语义：返回当前激活配置）
-func (s *SettingService) GetSoraS3Settings(ctx context.Context) (*SoraS3Settings, error) {
-	profiles, err := s.ListSoraS3Profiles(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	activeProfile := pickActiveSoraS3Profile(profiles.Items, profiles.ActiveProfileID)
-	if activeProfile == nil {
-		return &SoraS3Settings{}, nil
-	}
-
-	return &SoraS3Settings{
-		Enabled:                   activeProfile.Enabled,
-		Endpoint:                  activeProfile.Endpoint,
-		Region:                    activeProfile.Region,
-		Bucket:                    activeProfile.Bucket,
-		AccessKeyID:               activeProfile.AccessKeyID,
-		SecretAccessKey:           activeProfile.SecretAccessKey,
-		SecretAccessKeyConfigured: activeProfile.SecretAccessKeyConfigured,
-		Prefix:                    activeProfile.Prefix,
-		ForcePathStyle:            activeProfile.ForcePathStyle,
-		CDNURL:                    activeProfile.CDNURL,
-		DefaultStorageQuotaBytes:  activeProfile.DefaultStorageQuotaBytes,
-	}, nil
-}
-
-// SetSoraS3Settings 更新 Sora S3 存储配置（兼容旧单配置语义：写入当前激活配置）
-func (s *SettingService) SetSoraS3Settings(ctx context.Context, settings *SoraS3Settings) error {
-	if settings == nil {
-		return fmt.Errorf("settings cannot be nil")
-	}
-
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return err
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	activeIndex := findSoraS3ProfileIndex(store.Items, store.ActiveProfileID)
-	if activeIndex < 0 {
-		activeID := "default"
-		if hasSoraS3ProfileID(store.Items, activeID) {
-			activeID = fmt.Sprintf("default-%d", time.Now().Unix())
-		}
-		store.Items = append(store.Items, soraS3ProfileStoreItem{
-			ProfileID: activeID,
-			Name:      "Default",
-			UpdatedAt: now,
-		})
-		store.ActiveProfileID = activeID
-		activeIndex = len(store.Items) - 1
-	}
-
-	active := store.Items[activeIndex]
-	active.Enabled = settings.Enabled
-	active.Endpoint = strings.TrimSpace(settings.Endpoint)
-	active.Region = strings.TrimSpace(settings.Region)
-	active.Bucket = strings.TrimSpace(settings.Bucket)
-	active.AccessKeyID = strings.TrimSpace(settings.AccessKeyID)
-	active.Prefix = strings.TrimSpace(settings.Prefix)
-	active.ForcePathStyle = settings.ForcePathStyle
-	active.CDNURL = strings.TrimSpace(settings.CDNURL)
-	active.DefaultStorageQuotaBytes = maxInt64(settings.DefaultStorageQuotaBytes, 0)
-	if settings.SecretAccessKey != "" {
-		active.SecretAccessKey = settings.SecretAccessKey
-	}
-	active.UpdatedAt = now
-	store.Items[activeIndex] = active
-
-	return s.persistSoraS3ProfilesStore(ctx, store)
-}
-
-// ListSoraS3Profiles 获取 Sora S3 多配置列表
-func (s *SettingService) ListSoraS3Profiles(ctx context.Context) (*SoraS3ProfileList, error) {
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return convertSoraS3ProfilesStore(store), nil
-}
-
-// CreateSoraS3Profile 创建 Sora S3 配置
-func (s *SettingService) CreateSoraS3Profile(ctx context.Context, profile *SoraS3Profile, setActive bool) (*SoraS3Profile, error) {
-	if profile == nil {
-		return nil, fmt.Errorf("profile cannot be nil")
-	}
-
-	profileID := strings.TrimSpace(profile.ProfileID)
-	if profileID == "" {
-		return nil, infraerrors.BadRequest("SORA_S3_PROFILE_ID_REQUIRED", "profile_id is required")
-	}
-	name := strings.TrimSpace(profile.Name)
-	if name == "" {
-		return nil, infraerrors.BadRequest("SORA_S3_PROFILE_NAME_REQUIRED", "name is required")
-	}
-
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if hasSoraS3ProfileID(store.Items, profileID) {
-		return nil, ErrSoraS3ProfileExists
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	store.Items = append(store.Items, soraS3ProfileStoreItem{
-		ProfileID:                profileID,
-		Name:                     name,
-		Enabled:                  profile.Enabled,
-		Endpoint:                 strings.TrimSpace(profile.Endpoint),
-		Region:                   strings.TrimSpace(profile.Region),
-		Bucket:                   strings.TrimSpace(profile.Bucket),
-		AccessKeyID:              strings.TrimSpace(profile.AccessKeyID),
-		SecretAccessKey:          profile.SecretAccessKey,
-		Prefix:                   strings.TrimSpace(profile.Prefix),
-		ForcePathStyle:           profile.ForcePathStyle,
-		CDNURL:                   strings.TrimSpace(profile.CDNURL),
-		DefaultStorageQuotaBytes: maxInt64(profile.DefaultStorageQuotaBytes, 0),
-		UpdatedAt:                now,
-	})
-
-	if setActive || store.ActiveProfileID == "" {
-		store.ActiveProfileID = profileID
-	}
-
-	if err := s.persistSoraS3ProfilesStore(ctx, store); err != nil {
-		return nil, err
-	}
-
-	profiles := convertSoraS3ProfilesStore(store)
-	created := findSoraS3ProfileByID(profiles.Items, profileID)
-	if created == nil {
-		return nil, ErrSoraS3ProfileNotFound
-	}
-	return created, nil
-}
-
-// UpdateSoraS3Profile 更新 Sora S3 配置
-func (s *SettingService) UpdateSoraS3Profile(ctx context.Context, profileID string, profile *SoraS3Profile) (*SoraS3Profile, error) {
-	if profile == nil {
-		return nil, fmt.Errorf("profile cannot be nil")
-	}
-
-	targetID := strings.TrimSpace(profileID)
-	if targetID == "" {
-		return nil, infraerrors.BadRequest("SORA_S3_PROFILE_ID_REQUIRED", "profile_id is required")
-	}
-
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	targetIndex := findSoraS3ProfileIndex(store.Items, targetID)
-	if targetIndex < 0 {
-		return nil, ErrSoraS3ProfileNotFound
-	}
-
-	target := store.Items[targetIndex]
-	name := strings.TrimSpace(profile.Name)
-	if name == "" {
-		return nil, infraerrors.BadRequest("SORA_S3_PROFILE_NAME_REQUIRED", "name is required")
-	}
-	target.Name = name
-	target.Enabled = profile.Enabled
-	target.Endpoint = strings.TrimSpace(profile.Endpoint)
-	target.Region = strings.TrimSpace(profile.Region)
-	target.Bucket = strings.TrimSpace(profile.Bucket)
-	target.AccessKeyID = strings.TrimSpace(profile.AccessKeyID)
-	target.Prefix = strings.TrimSpace(profile.Prefix)
-	target.ForcePathStyle = profile.ForcePathStyle
-	target.CDNURL = strings.TrimSpace(profile.CDNURL)
-	target.DefaultStorageQuotaBytes = maxInt64(profile.DefaultStorageQuotaBytes, 0)
-	if profile.SecretAccessKey != "" {
-		target.SecretAccessKey = profile.SecretAccessKey
-	}
-	target.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	store.Items[targetIndex] = target
-
-	if err := s.persistSoraS3ProfilesStore(ctx, store); err != nil {
-		return nil, err
-	}
-
-	profiles := convertSoraS3ProfilesStore(store)
-	updated := findSoraS3ProfileByID(profiles.Items, targetID)
-	if updated == nil {
-		return nil, ErrSoraS3ProfileNotFound
-	}
-	return updated, nil
-}
-
-// DeleteSoraS3Profile 删除 Sora S3 配置
-func (s *SettingService) DeleteSoraS3Profile(ctx context.Context, profileID string) error {
-	targetID := strings.TrimSpace(profileID)
-	if targetID == "" {
-		return infraerrors.BadRequest("SORA_S3_PROFILE_ID_REQUIRED", "profile_id is required")
-	}
-
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return err
-	}
-
-	targetIndex := findSoraS3ProfileIndex(store.Items, targetID)
-	if targetIndex < 0 {
-		return ErrSoraS3ProfileNotFound
-	}
-
-	store.Items = append(store.Items[:targetIndex], store.Items[targetIndex+1:]...)
-	if store.ActiveProfileID == targetID {
-		store.ActiveProfileID = ""
-		if len(store.Items) > 0 {
-			store.ActiveProfileID = store.Items[0].ProfileID
-		}
-	}
-
-	return s.persistSoraS3ProfilesStore(ctx, store)
-}
-
-// SetActiveSoraS3Profile 设置激活的 Sora S3 配置
-func (s *SettingService) SetActiveSoraS3Profile(ctx context.Context, profileID string) (*SoraS3Profile, error) {
-	targetID := strings.TrimSpace(profileID)
-	if targetID == "" {
-		return nil, infraerrors.BadRequest("SORA_S3_PROFILE_ID_REQUIRED", "profile_id is required")
-	}
-
-	store, err := s.loadSoraS3ProfilesStore(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	targetIndex := findSoraS3ProfileIndex(store.Items, targetID)
-	if targetIndex < 0 {
-		return nil, ErrSoraS3ProfileNotFound
-	}
-
-	store.ActiveProfileID = targetID
-	store.Items[targetIndex].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := s.persistSoraS3ProfilesStore(ctx, store); err != nil {
-		return nil, err
-	}
-
-	profiles := convertSoraS3ProfilesStore(store)
-	active := pickActiveSoraS3Profile(profiles.Items, profiles.ActiveProfileID)
-	if active == nil {
-		return nil, ErrSoraS3ProfileNotFound
-	}
-	return active, nil
-}
-
-func (s *SettingService) loadSoraS3ProfilesStore(ctx context.Context) (*soraS3ProfilesStore, error) {
-	raw, err := s.settingRepo.GetValue(ctx, SettingKeySoraS3Profiles)
-	if err == nil {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			return &soraS3ProfilesStore{}, nil
-		}
-		var store soraS3ProfilesStore
-		if unmarshalErr := json.Unmarshal([]byte(trimmed), &store); unmarshalErr != nil {
-			legacy, legacyErr := s.getLegacySoraS3Settings(ctx)
-			if legacyErr != nil {
-				return nil, fmt.Errorf("unmarshal sora s3 profiles: %w", unmarshalErr)
-			}
-			if isEmptyLegacySoraS3Settings(legacy) {
-				return &soraS3ProfilesStore{}, nil
-			}
-			now := time.Now().UTC().Format(time.RFC3339)
-			return &soraS3ProfilesStore{
-				ActiveProfileID: "default",
-				Items: []soraS3ProfileStoreItem{
-					{
-						ProfileID:                "default",
-						Name:                     "Default",
-						Enabled:                  legacy.Enabled,
-						Endpoint:                 strings.TrimSpace(legacy.Endpoint),
-						Region:                   strings.TrimSpace(legacy.Region),
-						Bucket:                   strings.TrimSpace(legacy.Bucket),
-						AccessKeyID:              strings.TrimSpace(legacy.AccessKeyID),
-						SecretAccessKey:          legacy.SecretAccessKey,
-						Prefix:                   strings.TrimSpace(legacy.Prefix),
-						ForcePathStyle:           legacy.ForcePathStyle,
-						CDNURL:                   strings.TrimSpace(legacy.CDNURL),
-						DefaultStorageQuotaBytes: maxInt64(legacy.DefaultStorageQuotaBytes, 0),
-						UpdatedAt:                now,
-					},
-				},
-			}, nil
-		}
-		normalized := normalizeSoraS3ProfilesStore(store)
-		return &normalized, nil
-	}
-
-	if !errors.Is(err, ErrSettingNotFound) {
-		return nil, fmt.Errorf("get sora s3 profiles: %w", err)
-	}
-
-	legacy, legacyErr := s.getLegacySoraS3Settings(ctx)
-	if legacyErr != nil {
-		return nil, legacyErr
-	}
-	if isEmptyLegacySoraS3Settings(legacy) {
-		return &soraS3ProfilesStore{}, nil
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	return &soraS3ProfilesStore{
-		ActiveProfileID: "default",
-		Items: []soraS3ProfileStoreItem{
-			{
-				ProfileID:                "default",
-				Name:                     "Default",
-				Enabled:                  legacy.Enabled,
-				Endpoint:                 strings.TrimSpace(legacy.Endpoint),
-				Region:                   strings.TrimSpace(legacy.Region),
-				Bucket:                   strings.TrimSpace(legacy.Bucket),
-				AccessKeyID:              strings.TrimSpace(legacy.AccessKeyID),
-				SecretAccessKey:          legacy.SecretAccessKey,
-				Prefix:                   strings.TrimSpace(legacy.Prefix),
-				ForcePathStyle:           legacy.ForcePathStyle,
-				CDNURL:                   strings.TrimSpace(legacy.CDNURL),
-				DefaultStorageQuotaBytes: maxInt64(legacy.DefaultStorageQuotaBytes, 0),
-				UpdatedAt:                now,
-			},
-		},
-	}, nil
-}
-
-func (s *SettingService) persistSoraS3ProfilesStore(ctx context.Context, store *soraS3ProfilesStore) error {
-	if store == nil {
-		return fmt.Errorf("sora s3 profiles store cannot be nil")
-	}
-
-	normalized := normalizeSoraS3ProfilesStore(*store)
-	data, err := json.Marshal(normalized)
-	if err != nil {
-		return fmt.Errorf("marshal sora s3 profiles: %w", err)
-	}
-
-	updates := map[string]string{
-		SettingKeySoraS3Profiles: string(data),
-	}
-
-	active := pickActiveSoraS3ProfileFromStore(normalized.Items, normalized.ActiveProfileID)
-	if active == nil {
-		updates[SettingKeySoraS3Enabled] = "false"
-		updates[SettingKeySoraS3Endpoint] = ""
-		updates[SettingKeySoraS3Region] = ""
-		updates[SettingKeySoraS3Bucket] = ""
-		updates[SettingKeySoraS3AccessKeyID] = ""
-		updates[SettingKeySoraS3Prefix] = ""
-		updates[SettingKeySoraS3ForcePathStyle] = "false"
-		updates[SettingKeySoraS3CDNURL] = ""
-		updates[SettingKeySoraDefaultStorageQuotaBytes] = "0"
-		updates[SettingKeySoraS3SecretAccessKey] = ""
-	} else {
-		updates[SettingKeySoraS3Enabled] = strconv.FormatBool(active.Enabled)
-		updates[SettingKeySoraS3Endpoint] = strings.TrimSpace(active.Endpoint)
-		updates[SettingKeySoraS3Region] = strings.TrimSpace(active.Region)
-		updates[SettingKeySoraS3Bucket] = strings.TrimSpace(active.Bucket)
-		updates[SettingKeySoraS3AccessKeyID] = strings.TrimSpace(active.AccessKeyID)
-		updates[SettingKeySoraS3Prefix] = strings.TrimSpace(active.Prefix)
-		updates[SettingKeySoraS3ForcePathStyle] = strconv.FormatBool(active.ForcePathStyle)
-		updates[SettingKeySoraS3CDNURL] = strings.TrimSpace(active.CDNURL)
-		updates[SettingKeySoraDefaultStorageQuotaBytes] = strconv.FormatInt(maxInt64(active.DefaultStorageQuotaBytes, 0), 10)
-		updates[SettingKeySoraS3SecretAccessKey] = active.SecretAccessKey
-	}
-
-	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
-		return err
-	}
-
-	if s.onUpdate != nil {
-		s.onUpdate()
-	}
-	if s.onS3Update != nil {
-		s.onS3Update()
-	}
-	return nil
-}
-
-func (s *SettingService) getLegacySoraS3Settings(ctx context.Context) (*SoraS3Settings, error) {
-	keys := []string{
-		SettingKeySoraS3Enabled,
-		SettingKeySoraS3Endpoint,
-		SettingKeySoraS3Region,
-		SettingKeySoraS3Bucket,
-		SettingKeySoraS3AccessKeyID,
-		SettingKeySoraS3SecretAccessKey,
-		SettingKeySoraS3Prefix,
-		SettingKeySoraS3ForcePathStyle,
-		SettingKeySoraS3CDNURL,
-		SettingKeySoraDefaultStorageQuotaBytes,
-	}
-
-	values, err := s.settingRepo.GetMultiple(ctx, keys)
-	if err != nil {
-		return nil, fmt.Errorf("get legacy sora s3 settings: %w", err)
-	}
-
-	result := &SoraS3Settings{
-		Enabled:                   values[SettingKeySoraS3Enabled] == "true",
-		Endpoint:                  values[SettingKeySoraS3Endpoint],
-		Region:                    values[SettingKeySoraS3Region],
-		Bucket:                    values[SettingKeySoraS3Bucket],
-		AccessKeyID:               values[SettingKeySoraS3AccessKeyID],
-		SecretAccessKey:           values[SettingKeySoraS3SecretAccessKey],
-		SecretAccessKeyConfigured: values[SettingKeySoraS3SecretAccessKey] != "",
-		Prefix:                    values[SettingKeySoraS3Prefix],
-		ForcePathStyle:            values[SettingKeySoraS3ForcePathStyle] == "true",
-		CDNURL:                    values[SettingKeySoraS3CDNURL],
-	}
-	if v, parseErr := strconv.ParseInt(values[SettingKeySoraDefaultStorageQuotaBytes], 10, 64); parseErr == nil {
-		result.DefaultStorageQuotaBytes = v
-	}
-	return result, nil
-}
-
-func normalizeSoraS3ProfilesStore(store soraS3ProfilesStore) soraS3ProfilesStore {
-	seen := make(map[string]struct{}, len(store.Items))
-	normalized := soraS3ProfilesStore{
-		ActiveProfileID: strings.TrimSpace(store.ActiveProfileID),
-		Items:           make([]soraS3ProfileStoreItem, 0, len(store.Items)),
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	for idx := range store.Items {
-		item := store.Items[idx]
-		item.ProfileID = strings.TrimSpace(item.ProfileID)
-		if item.ProfileID == "" {
-			item.ProfileID = fmt.Sprintf("profile-%d", idx+1)
-		}
-		if _, exists := seen[item.ProfileID]; exists {
-			continue
-		}
-		seen[item.ProfileID] = struct{}{}
-
-		item.Name = strings.TrimSpace(item.Name)
-		if item.Name == "" {
-			item.Name = item.ProfileID
-		}
-		item.Endpoint = strings.TrimSpace(item.Endpoint)
-		item.Region = strings.TrimSpace(item.Region)
-		item.Bucket = strings.TrimSpace(item.Bucket)
-		item.AccessKeyID = strings.TrimSpace(item.AccessKeyID)
-		item.Prefix = strings.TrimSpace(item.Prefix)
-		item.CDNURL = strings.TrimSpace(item.CDNURL)
-		item.DefaultStorageQuotaBytes = maxInt64(item.DefaultStorageQuotaBytes, 0)
-		item.UpdatedAt = strings.TrimSpace(item.UpdatedAt)
-		if item.UpdatedAt == "" {
-			item.UpdatedAt = now
-		}
-		normalized.Items = append(normalized.Items, item)
-	}
-
-	if len(normalized.Items) == 0 {
-		normalized.ActiveProfileID = ""
-		return normalized
-	}
-
-	if findSoraS3ProfileIndex(normalized.Items, normalized.ActiveProfileID) >= 0 {
-		return normalized
-	}
-
-	normalized.ActiveProfileID = normalized.Items[0].ProfileID
-	return normalized
-}
-
-func convertSoraS3ProfilesStore(store *soraS3ProfilesStore) *SoraS3ProfileList {
-	if store == nil {
-		return &SoraS3ProfileList{}
-	}
-	items := make([]SoraS3Profile, 0, len(store.Items))
-	for idx := range store.Items {
-		item := store.Items[idx]
-		items = append(items, SoraS3Profile{
-			ProfileID:                 item.ProfileID,
-			Name:                      item.Name,
-			IsActive:                  item.ProfileID == store.ActiveProfileID,
-			Enabled:                   item.Enabled,
-			Endpoint:                  item.Endpoint,
-			Region:                    item.Region,
-			Bucket:                    item.Bucket,
-			AccessKeyID:               item.AccessKeyID,
-			SecretAccessKey:           item.SecretAccessKey,
-			SecretAccessKeyConfigured: item.SecretAccessKey != "",
-			Prefix:                    item.Prefix,
-			ForcePathStyle:            item.ForcePathStyle,
-			CDNURL:                    item.CDNURL,
-			DefaultStorageQuotaBytes:  item.DefaultStorageQuotaBytes,
-			UpdatedAt:                 item.UpdatedAt,
-		})
-	}
-	return &SoraS3ProfileList{
-		ActiveProfileID: store.ActiveProfileID,
-		Items:           items,
-	}
-}
-
-func pickActiveSoraS3Profile(items []SoraS3Profile, activeProfileID string) *SoraS3Profile {
-	for idx := range items {
-		if items[idx].ProfileID == activeProfileID {
-			return &items[idx]
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return &items[0]
-}
-
-func findSoraS3ProfileByID(items []SoraS3Profile, profileID string) *SoraS3Profile {
-	for idx := range items {
-		if items[idx].ProfileID == profileID {
-			return &items[idx]
-		}
-	}
-	return nil
-}
-
-func pickActiveSoraS3ProfileFromStore(items []soraS3ProfileStoreItem, activeProfileID string) *soraS3ProfileStoreItem {
-	for idx := range items {
-		if items[idx].ProfileID == activeProfileID {
-			return &items[idx]
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return &items[0]
-}
-
-func findSoraS3ProfileIndex(items []soraS3ProfileStoreItem, profileID string) int {
-	for idx := range items {
-		if items[idx].ProfileID == profileID {
-			return idx
-		}
-	}
-	return -1
-}
-
-func hasSoraS3ProfileID(items []soraS3ProfileStoreItem, profileID string) bool {
-	return findSoraS3ProfileIndex(items, profileID) >= 0
-}
-
-func isEmptyLegacySoraS3Settings(settings *SoraS3Settings) bool {
-	if settings == nil {
-		return true
-	}
-	if settings.Enabled {
-		return false
-	}
-	if strings.TrimSpace(settings.Endpoint) != "" {
-		return false
-	}
-	if strings.TrimSpace(settings.Region) != "" {
-		return false
-	}
-	if strings.TrimSpace(settings.Bucket) != "" {
-		return false
-	}
-	if strings.TrimSpace(settings.AccessKeyID) != "" {
-		return false
-	}
-	if settings.SecretAccessKey != "" {
-		return false
-	}
-	if strings.TrimSpace(settings.Prefix) != "" {
-		return false
-	}
-	if strings.TrimSpace(settings.CDNURL) != "" {
-		return false
-	}
-	return settings.DefaultStorageQuotaBytes == 0
-}
-
-func maxInt64(value int64, min int64) int64 {
-	if value < min {
-		return min
-	}
-	return value
 }

@@ -1,6 +1,8 @@
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 
 export interface OpenAITokenInfo {
   access_token?: string
@@ -22,16 +24,12 @@ export interface OpenAITokenInfo {
   [key: string]: unknown
 }
 
-export type OpenAIOAuthPlatform = 'openai' | 'sora'
+export type OpenAIOAuthPlatform = 'openai'
 
-interface UseOpenAIOAuthOptions {
-  platform?: OpenAIOAuthPlatform
-}
-
-export function useOpenAIOAuth(options?: UseOpenAIOAuthOptions) {
+export function useOpenAIOAuth() {
   const appStore = useAppStore()
-  const oauthPlatform = options?.platform ?? 'openai'
-  const endpointPrefix = oauthPlatform === 'sora' ? '/admin/sora' : '/admin/openai'
+  const { t } = useI18n()
+  const endpointPrefix = '/admin/openai'
 
   // State
   const authUrl = ref('')
@@ -83,7 +81,7 @@ export function useOpenAIOAuth(options?: UseOpenAIOAuthOptions) {
       }
       return true
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to generate OpenAI auth URL'
+      error.value = extractApiErrorMessage(err, t('admin.accounts.oauth.openai.failedToGenerateUrl'))
       appStore.showError(error.value)
       return false
     } finally {
@@ -119,7 +117,12 @@ export function useOpenAIOAuth(options?: UseOpenAIOAuthOptions) {
       const tokenInfo = await adminAPI.accounts.exchangeCode(`${endpointPrefix}/exchange-code`, payload)
       return tokenInfo as OpenAITokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to exchange OpenAI auth code'
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.openai.errors',
+        t('admin.accounts.oauth.openai.failedToExchangeCode')
+      )
       appStore.showError(error.value)
       return null
     } finally {
@@ -152,34 +155,12 @@ export function useOpenAIOAuth(options?: UseOpenAIOAuthOptions) {
       )
       return tokenInfo as OpenAITokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || err.message || 'Failed to validate refresh token'
-      appStore.showError(error.value)
-      return null
-    } finally {
-      loading.value = false
-    }
-  }
-
-  // Validate Sora session token and get access token
-  const validateSessionToken = async (
-    sessionToken: string,
-    proxyId?: number | null
-  ): Promise<OpenAITokenInfo | null> => {
-    if (!sessionToken.trim()) {
-      error.value = 'Missing session token'
-      return null
-    }
-    loading.value = true
-    error.value = ''
-    try {
-      const tokenInfo = await adminAPI.accounts.validateSoraSessionToken(
-        sessionToken.trim(),
-        proxyId,
-        `${endpointPrefix}/st2at`
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.openai.errors',
+        t('admin.accounts.oauth.openai.failedToValidateRT')
       )
-      return tokenInfo as OpenAITokenInfo
-    } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to validate session token'
       appStore.showError(error.value)
       return null
     } finally {
@@ -250,7 +231,6 @@ export function useOpenAIOAuth(options?: UseOpenAIOAuthOptions) {
     generateAuthUrl,
     exchangeAuthCode,
     validateRefreshToken,
-    validateSessionToken,
     buildCredentials,
     buildExtraInfo
   }

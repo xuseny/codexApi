@@ -20,6 +20,7 @@ type rateLimitAccountRepoStub struct {
 	updateCredentialsCalls int
 	lastCredentials        map[string]any
 	lastErrorMsg           string
+	lastTempReason         string
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
@@ -30,6 +31,7 @@ func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, error
 
 func (r *rateLimitAccountRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.tempCalls++
+	r.lastTempReason = reason
 	return nil
 }
 
@@ -42,6 +44,29 @@ func (r *rateLimitAccountRepoStub) UpdateCredentials(ctx context.Context, id int
 type tokenCacheInvalidatorRecorder struct {
 	accounts []*Account
 	err      error
+}
+
+type openAI403CounterCacheStub struct {
+	counts     []int64
+	resetCalls []int64
+	err        error
+}
+
+func (s *openAI403CounterCacheStub) IncrementOpenAI403Count(_ context.Context, _ int64, _ int) (int64, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	if len(s.counts) == 0 {
+		return 1, nil
+	}
+	count := s.counts[0]
+	s.counts = s.counts[1:]
+	return count, nil
+}
+
+func (s *openAI403CounterCacheStub) ResetOpenAI403Count(_ context.Context, accountID int64) error {
+	s.resetCalls = append(s.resetCalls, accountID)
+	return nil
 }
 
 func (r *tokenCacheInvalidatorRecorder) InvalidateToken(ctx context.Context, account *Account) error {
@@ -102,6 +127,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 	})
 }
 
+// TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError
+// OpenAI OAuth 401 缓存失效出错时仍走 temp_unschedulable
 func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	invalidator := &tokenCacheInvalidatorRecorder{err: errors.New("boom")}
@@ -109,7 +136,7 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 	service.SetTokenCacheInvalidator(invalidator)
 	account := &Account{
 		ID:       101,
-		Platform: PlatformGemini,
+		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 	}
 

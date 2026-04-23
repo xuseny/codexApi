@@ -1,18 +1,33 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+)
 
 type User struct {
-	ID            int64     `json:"id"`
-	Email         string    `json:"email"`
-	Username      string    `json:"username"`
-	Role          string    `json:"role"`
-	Balance       float64   `json:"balance"`
-	Concurrency   int       `json:"concurrency"`
-	Status        string    `json:"status"`
-	AllowedGroups []int64   `json:"allowed_groups"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID            int64      `json:"id"`
+	Email         string     `json:"email"`
+	Username      string     `json:"username"`
+	Role          string     `json:"role"`
+	Balance       float64    `json:"balance"`
+	Concurrency   int        `json:"concurrency"`
+	Status        string     `json:"status"`
+	AllowedGroups []int64    `json:"allowed_groups"`
+	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+
+	// 余额不足通知
+	BalanceNotifyEnabled       bool               `json:"balance_notify_enabled"`
+	BalanceNotifyThresholdType string             `json:"balance_notify_threshold_type"`
+	BalanceNotifyThreshold     *float64           `json:"balance_notify_threshold"`
+	BalanceNotifyExtraEmails   []NotifyEmailEntry `json:"balance_notify_extra_emails"`
+	TotalRecharged             float64            `json:"total_recharged"`
+
+	// RPMLimit 用户级每分钟请求数上限（0 = 不限制），仅在所用分组未设置 rpm_limit 时作为兜底生效。
+	RPMLimit int `json:"rpm_limit"`
 
 	APIKeys       []APIKey           `json:"api_keys,omitempty"`
 	Subscriptions []UserSubscription `json:"subscriptions,omitempty"`
@@ -23,12 +38,11 @@ type User struct {
 type AdminUser struct {
 	User
 
-	Notes string `json:"notes"`
+	Notes      string     `json:"notes"`
+	LastUsedAt *time.Time `json:"last_used_at"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier
-	GroupRates            map[int64]float64 `json:"group_rates,omitempty"`
-	SoraStorageQuotaBytes int64             `json:"sora_storage_quota_bytes"`
-	SoraStorageUsedBytes  int64             `json:"sora_storage_used_bytes"`
+	GroupRates map[int64]float64 `json:"group_rates,omitempty"`
 }
 
 type APIKey struct {
@@ -143,23 +157,21 @@ type Group struct {
 	ImagePrice2K *float64 `json:"image_price_2k"`
 	ImagePrice4K *float64 `json:"image_price_4k"`
 
-	// Sora 按次计费配置
-	SoraImagePrice360          *float64 `json:"sora_image_price_360"`
-	SoraImagePrice540          *float64 `json:"sora_image_price_540"`
-	SoraVideoPricePerRequest   *float64 `json:"sora_video_price_per_request"`
-	SoraVideoPricePerRequestHD *float64 `json:"sora_video_price_per_request_hd"`
-
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool   `json:"claude_code_only"`
 	FallbackGroupID *int64 `json:"fallback_group_id"`
 	// 无效请求兜底分组
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request"`
 
-	// Sora 存储配额
-	SoraStorageQuotaBytes int64 `json:"sora_storage_quota_bytes"`
-
 	// OpenAI Messages 调度开关（用户侧需要此字段判断是否展示 Claude Code 教程）
 	AllowMessagesDispatch bool `json:"allow_messages_dispatch"`
+
+	// 账号过滤控制（仅 OpenAI/Antigravity 平台有效）
+	RequireOAuthOnly  bool `json:"require_oauth_only"`
+	RequirePrivacySet bool `json:"require_privacy_set"`
+
+	// RPMLimit 分组级每分钟请求数上限（0 = 不限制），设置后覆盖用户级 rpm_limit。
+	RPMLimit int `json:"rpm_limit"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -178,7 +190,8 @@ type AdminGroup struct {
 	MCPXMLInject bool `json:"mcp_xml_inject"`
 
 	// OpenAI Messages 调度配置（仅 openai 平台使用）
-	DefaultMappedModel string `json:"default_mapped_model"`
+	DefaultMappedModel          string                                   `json:"default_mapped_model"`
+	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 
 	// 支持的模型系列（仅 antigravity 平台使用）
 	SupportedModelScopes    []string       `json:"supported_model_scopes"`
@@ -257,6 +270,10 @@ type Account struct {
 	CacheTTLOverrideEnabled *bool   `json:"cache_ttl_override_enabled,omitempty"`
 	CacheTTLOverrideTarget  *string `json:"cache_ttl_override_target,omitempty"`
 
+	// 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 账号有效）
+	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
+	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
+
 	// API Key 账号配额限制
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`
@@ -274,6 +291,14 @@ type Account struct {
 	QuotaResetTimezone   *string `json:"quota_reset_timezone,omitempty"`
 	QuotaDailyResetAt    *string `json:"quota_daily_reset_at,omitempty"`
 	QuotaWeeklyResetAt   *string `json:"quota_weekly_reset_at,omitempty"`
+
+	// 配额通知配置
+	QuotaNotifyDailyEnabled    *bool    `json:"quota_notify_daily_enabled,omitempty"`
+	QuotaNotifyDailyThreshold  *float64 `json:"quota_notify_daily_threshold,omitempty"`
+	QuotaNotifyWeeklyEnabled   *bool    `json:"quota_notify_weekly_enabled,omitempty"`
+	QuotaNotifyWeeklyThreshold *float64 `json:"quota_notify_weekly_threshold,omitempty"`
+	QuotaNotifyTotalEnabled    *bool    `json:"quota_notify_total_enabled,omitempty"`
+	QuotaNotifyTotalThreshold  *float64 `json:"quota_notify_total_threshold,omitempty"`
 
 	Proxy         *Proxy         `json:"proxy,omitempty"`
 	AccountGroups []AccountGroup `json:"account_groups,omitempty"`
@@ -441,6 +466,9 @@ type UsageLog struct {
 	// Cache TTL Override 标记
 	CacheTTLOverridden bool `json:"cache_ttl_overridden"`
 
+	// BillingMode 计费模式：token/image
+	BillingMode *string `json:"billing_mode,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 
 	User         *User             `json:"user,omitempty"`
@@ -457,8 +485,17 @@ type AdminUsageLog struct {
 	// Omitted when no mapping was applied (requested model was used as-is).
 	UpstreamModel *string `json:"upstream_model,omitempty"`
 
+	// ChannelID 渠道 ID
+	ChannelID *int64 `json:"channel_id,omitempty"`
+	// ModelMappingChain 模型映射链，如 "a→b→c"
+	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
+	// BillingTier 计费层级标签（per_request/image 模式）
+	BillingTier *string `json:"billing_tier,omitempty"`
+
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示按 1.0 处理）
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier"`
+	// AccountStatsCost 自定义定价规则计算的账号统计费用（nil 表示使用默认公式）
+	AccountStatsCost *float64 `json:"account_stats_cost,omitempty"`
 
 	// IPAddress 用户请求 IP（仅管理员可见）
 	IPAddress *string `json:"ip_address,omitempty"`

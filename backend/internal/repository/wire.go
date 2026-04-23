@@ -47,19 +47,35 @@ func ProvideSessionLimitCache(rdb *redis.Client, cfg *config.Config) service.Ses
 	return NewSessionLimitCache(rdb, defaultIdleTimeoutMinutes)
 }
 
+// ProvideSchedulerCache 创建调度快照缓存，并注入快照分块参数。
+func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.SchedulerCache {
+	mgetChunkSize := defaultSchedulerSnapshotMGetChunkSize
+	writeChunkSize := defaultSchedulerSnapshotWriteChunkSize
+	if cfg != nil {
+		if cfg.Gateway.Scheduling.SnapshotMGetChunkSize > 0 {
+			mgetChunkSize = cfg.Gateway.Scheduling.SnapshotMGetChunkSize
+		}
+		if cfg.Gateway.Scheduling.SnapshotWriteChunkSize > 0 {
+			writeChunkSize = cfg.Gateway.Scheduling.SnapshotWriteChunkSize
+		}
+	}
+	return newSchedulerCacheWithChunkSizes(rdb, mgetChunkSize, writeChunkSize)
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
 	NewUserRepository,
 	NewAPIKeyRepository,
 	NewGroupRepository,
 	NewAccountRepository,
-	NewSoraAccountRepository,         // Sora 账号扩展表仓储
 	NewScheduledTestPlanRepository,   // 定时测试计划仓储
 	NewScheduledTestResultRepository, // 定时测试结果仓储
 	NewProxyRepository,
 	NewAPIKeyExchangeRepository,
 	NewRedeemCodeRepository,
 	NewPromoCodeRepository,
+	NewSoraAccountRepository,
+	NewSoraGenerationRepository,
 	NewAnnouncementRepository,
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,
@@ -75,6 +91,7 @@ var ProviderSet = wire.NewSet(
 	NewUserGroupRateRepository,
 	NewErrorPassthroughRepository,
 	NewTLSFingerprintProfileRepository,
+	NewChannelRepository,
 
 	// Cache implementations
 	NewGatewayCache,
@@ -82,9 +99,12 @@ var ProviderSet = wire.NewSet(
 	NewAPIKeyCache,
 	NewTempUnschedCache,
 	NewTimeoutCounterCache,
+	NewOpenAI403CounterCache,
+	NewInternal500CounterCache,
 	ProvideConcurrencyCache,
 	ProvideSessionLimitCache,
 	NewRPMCache,
+	NewUserRPMCache,
 	NewUserMsgQueueCache,
 	NewDashboardCache,
 	NewEmailCache,
@@ -92,7 +112,7 @@ var ProviderSet = wire.NewSet(
 	NewRedeemCache,
 	NewUpdateCache,
 	NewGeminiTokenCache,
-	NewSchedulerCache,
+	ProvideSchedulerCache,
 	NewSchedulerOutboxRepository,
 	NewProxyLatencyCache,
 	NewTotpCache,

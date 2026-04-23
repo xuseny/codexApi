@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"testing"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -158,30 +159,6 @@ func (s *OpenAIOAuthServiceSuite) TestRefreshToken_DefaultsToOpenAIClientID() {
 	require.Equal(s.T(), []string{openai.ClientID}, seenClientIDs)
 }
 
-// TestRefreshToken_UseSoraClientID 验证显式传入 Sora ClientID 时直接使用，不回退。
-func (s *OpenAIOAuthServiceSuite) TestRefreshToken_UseSoraClientID() {
-	var seenClientIDs []string
-	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		clientID := r.PostForm.Get("client_id")
-		seenClientIDs = append(seenClientIDs, clientID)
-		if clientID == openai.SoraClientID {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"access_token":"at-sora","refresh_token":"rt-sora","token_type":"bearer","expires_in":3600}`)
-			return
-		}
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-
-	resp, err := s.svc.RefreshTokenWithClientID(s.ctx, "rt", "", openai.SoraClientID)
-	require.NoError(s.T(), err, "RefreshTokenWithClientID")
-	require.Equal(s.T(), "at-sora", resp.AccessToken)
-	require.Equal(s.T(), []string{openai.SoraClientID}, seenClientIDs)
-}
-
 func (s *OpenAIOAuthServiceSuite) TestRefreshToken_UseProvidedClientID() {
 	const customClientID = "custom-client-id"
 	var seenClientIDs []string
@@ -226,6 +203,17 @@ func (s *OpenAIOAuthServiceSuite) TestRequestError_ClosedServer() {
 	_, err := s.svc.ExchangeCode(s.ctx, "code", "ver", openai.DefaultRedirectURI, "", "")
 	require.Error(s.T(), err)
 	require.ErrorContains(s.T(), err, "request failed")
+}
+
+func (s *OpenAIOAuthServiceSuite) TestExchangeCode_RequestErrorWithoutProxyReturnsProxyHint() {
+	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	s.srv.Close()
+
+	_, err := s.svc.ExchangeCode(s.ctx, "code", "ver", openai.DefaultRedirectURI, "", "")
+
+	require.Error(s.T(), err)
+	require.Equal(s.T(), "OPENAI_OAUTH_PROXY_REQUIRED", infraerrors.Reason(err))
+	require.Contains(s.T(), infraerrors.Message(err), "no proxy is configured")
 }
 
 func (s *OpenAIOAuthServiceSuite) TestContextCancel() {
@@ -276,7 +264,7 @@ func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UsesProvidedRedirectURI() {
 }
 
 func (s *OpenAIOAuthServiceSuite) TestExchangeCode_UseProvidedClientID() {
-	wantClientID := openai.SoraClientID
+	wantClientID := "custom-exchange-client-id"
 	errCh := make(chan string, 1)
 	s.setupServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()

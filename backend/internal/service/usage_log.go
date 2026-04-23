@@ -104,6 +104,14 @@ type UsageLog struct {
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Nil means no mapping was applied (requested model was used as-is).
 	UpstreamModel *string
+	// ChannelID 渠道 ID
+	ChannelID *int64
+	// ModelMappingChain 模型映射链，如 "a→b→c"
+	ModelMappingChain *string
+	// BillingTier 计费层级标签（per_request/image 模式）
+	BillingTier *string
+	// BillingMode 计费模式：token/image
+	BillingMode *string
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string
 	// ReasoningEffort is the request's reasoning effort level.
@@ -126,6 +134,9 @@ type UsageLog struct {
 	CacheCreation5mTokens int `gorm:"column:cache_creation_5m_tokens"`
 	CacheCreation1hTokens int `gorm:"column:cache_creation_1h_tokens"`
 
+	ImageOutputTokens int
+	ImageOutputCost   float64
+
 	InputCost         float64
 	OutputCost        float64
 	CacheCreationCost float64
@@ -135,6 +146,8 @@ type UsageLog struct {
 	RateMultiplier    float64
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示历史数据，按 1.0 处理）
 	AccountRateMultiplier *float64
+	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
+	AccountStatsCost *float64
 
 	BillingType  int8
 	RequestType  RequestType

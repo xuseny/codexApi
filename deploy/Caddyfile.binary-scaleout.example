@@ -1,0 +1,111 @@
+# 修改为你的实际域名
+api.example.com {
+	# 静态资源长期缓存
+	@static {
+		path /assets/*
+		path /logo.png
+		path /favicon.ico
+	}
+	header @static {
+		Cache-Control "public, max-age=31536000, immutable"
+		-Pragma
+		-Expires
+	}
+
+	tls {
+		protocols tls1.2 tls1.3
+		ciphers TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+	}
+
+	# 如果仍然使用本地 Sora 媒体存储，建议固定回旧服务器 A
+	@local_sora_media {
+		path /sora/media/*
+		path /sora/media-signed/*
+	}
+
+	# datamanagementd 默认只部署在旧服务器 A，相关接口也固定回 A
+	@data_management {
+		path /api/v1/admin/data-management/*
+	}
+
+	handle @local_sora_media {
+		reverse_proxy 127.0.0.1:2127 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}
+		}
+	}
+
+	handle @data_management {
+		reverse_proxy 127.0.0.1:2127 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}
+		}
+	}
+
+	handle {
+		# 普通请求走双节点负载均衡
+		# 旧服务器 A 本机节点：127.0.0.1:2127
+		# 新服务器 B 内网地址：10.0.0.12:2127
+		reverse_proxy 127.0.0.1:2127 10.0.0.12:2127 {
+			health_uri /health
+			health_interval 30s
+			health_timeout 10s
+			health_status 200
+
+			lb_policy round_robin
+			lb_try_duration 5s
+			lb_try_interval 250ms
+
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}
+
+			transport http {
+				keepalive 120s
+				read_buffer 16KB
+				write_buffer 16KB
+				compression off
+			}
+
+			fail_duration 30s
+			max_fails 3
+		}
+	}
+
+	encode {
+		zstd
+		gzip 6
+		minimum_length 256
+		match {
+			header Content-Type text/*
+			header Content-Type application/json*
+			header Content-Type application/javascript*
+			header Content-Type application/xml*
+			header Content-Type application/rss+xml*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+
+	log {
+		output file /var/log/caddy/sub2api.log {
+			roll_size 50mb
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+		level INFO
+	}
+
+	handle_errors {
+		respond "{err.status_code} {err.status_text}"
+	}
+}

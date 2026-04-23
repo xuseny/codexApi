@@ -24,7 +24,6 @@ const (
 	PlatformOpenAI      = domain.PlatformOpenAI
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
-	PlatformSora        = domain.PlatformSora
 )
 
 // Account type constants
@@ -73,6 +72,12 @@ const (
 // LinuxDoConnectSyntheticEmailDomain 是 LinuxDo Connect 用户的合成邮箱后缀（RFC 保留域名）。
 const LinuxDoConnectSyntheticEmailDomain = "@linuxdo-connect.invalid"
 
+// OIDCConnectSyntheticEmailDomain 是 OIDC 用户的合成邮箱后缀（RFC 保留域名）。
+const OIDCConnectSyntheticEmailDomain = "@oidc-connect.invalid"
+
+// WeChatConnectSyntheticEmailDomain 是 WeChat Connect 用户的合成邮箱后缀（RFC 保留域名）。
+const WeChatConnectSyntheticEmailDomain = "@wechat-connect.invalid"
+
 // Setting keys
 const (
 	// 注册设置
@@ -107,8 +112,49 @@ const (
 	SettingKeyLinuxDoConnectClientSecret = "linuxdo_connect_client_secret"
 	SettingKeyLinuxDoConnectRedirectURL  = "linuxdo_connect_redirect_url"
 
+	// WeChat Connect OAuth 登录设置
+	SettingKeyWeChatConnectEnabled             = "wechat_connect_enabled"
+	SettingKeyWeChatConnectAppID               = "wechat_connect_app_id"
+	SettingKeyWeChatConnectAppSecret           = "wechat_connect_app_secret"
+	SettingKeyWeChatConnectOpenAppID           = "wechat_connect_open_app_id"
+	SettingKeyWeChatConnectOpenAppSecret       = "wechat_connect_open_app_secret"
+	SettingKeyWeChatConnectMPAppID             = "wechat_connect_mp_app_id"
+	SettingKeyWeChatConnectMPAppSecret         = "wechat_connect_mp_app_secret"
+	SettingKeyWeChatConnectMobileAppID         = "wechat_connect_mobile_app_id"
+	SettingKeyWeChatConnectMobileAppSecret     = "wechat_connect_mobile_app_secret"
+	SettingKeyWeChatConnectOpenEnabled         = "wechat_connect_open_enabled"
+	SettingKeyWeChatConnectMPEnabled           = "wechat_connect_mp_enabled"
+	SettingKeyWeChatConnectMobileEnabled       = "wechat_connect_mobile_enabled"
+	SettingKeyWeChatConnectMode                = "wechat_connect_mode"
+	SettingKeyWeChatConnectScopes              = "wechat_connect_scopes"
+	SettingKeyWeChatConnectRedirectURL         = "wechat_connect_redirect_url"
+	SettingKeyWeChatConnectFrontendRedirectURL = "wechat_connect_frontend_redirect_url"
+
+	// Generic OIDC OAuth 登录设置
+	SettingKeyOIDCConnectEnabled              = "oidc_connect_enabled"
+	SettingKeyOIDCConnectProviderName         = "oidc_connect_provider_name"
+	SettingKeyOIDCConnectClientID             = "oidc_connect_client_id"
+	SettingKeyOIDCConnectClientSecret         = "oidc_connect_client_secret"
+	SettingKeyOIDCConnectIssuerURL            = "oidc_connect_issuer_url"
+	SettingKeyOIDCConnectDiscoveryURL         = "oidc_connect_discovery_url"
+	SettingKeyOIDCConnectAuthorizeURL         = "oidc_connect_authorize_url"
+	SettingKeyOIDCConnectTokenURL             = "oidc_connect_token_url"
+	SettingKeyOIDCConnectUserInfoURL          = "oidc_connect_userinfo_url"
+	SettingKeyOIDCConnectJWKSURL              = "oidc_connect_jwks_url"
+	SettingKeyOIDCConnectScopes               = "oidc_connect_scopes"
+	SettingKeyOIDCConnectRedirectURL          = "oidc_connect_redirect_url"
+	SettingKeyOIDCConnectFrontendRedirectURL  = "oidc_connect_frontend_redirect_url"
+	SettingKeyOIDCConnectTokenAuthMethod      = "oidc_connect_token_auth_method"
+	SettingKeyOIDCConnectUsePKCE              = "oidc_connect_use_pkce"
+	SettingKeyOIDCConnectValidateIDToken      = "oidc_connect_validate_id_token"
+	SettingKeyOIDCConnectAllowedSigningAlgs   = "oidc_connect_allowed_signing_algs"
+	SettingKeyOIDCConnectClockSkewSeconds     = "oidc_connect_clock_skew_seconds"
+	SettingKeyOIDCConnectRequireEmailVerified = "oidc_connect_require_email_verified"
+	SettingKeyOIDCConnectUserInfoEmailPath    = "oidc_connect_userinfo_email_path"
+	SettingKeyOIDCConnectUserInfoIDPath       = "oidc_connect_userinfo_id_path"
+	SettingKeyOIDCConnectUserInfoUsernamePath = "oidc_connect_userinfo_username_path"
+
 	// OEM设置
-	SettingKeySoraClientEnabled           = "sora_client_enabled"           // 是否启用 Sora 客户端（管理员手动控制）
 	SettingKeySiteName                    = "site_name"                     // 网站名称
 	SettingKeySiteLogo                    = "site_logo"                     // 网站Logo (base64)
 	SettingKeySiteSubtitle                = "site_subtitle"                 // 网站副标题
@@ -119,13 +165,39 @@ const (
 	SettingKeyHideCcsImportButton         = "hide_ccs_import_button"        // 是否隐藏 API Keys 页面的导入 CCS 按钮
 	SettingKeyPurchaseSubscriptionEnabled = "purchase_subscription_enabled" // 是否展示"购买订阅"页面入口
 	SettingKeyPurchaseSubscriptionURL     = "purchase_subscription_url"     // "购买订阅"页面 URL（作为 iframe src）
+	SettingKeyTableDefaultPageSize        = "table_default_page_size"       // 表格默认每页条数
+	SettingKeyTablePageSizeOptions        = "table_page_size_options"       // 表格可选每页条数（JSON 数组）
 	SettingKeyCustomMenuItems             = "custom_menu_items"             // 自定义菜单项（JSON 数组）
 	SettingKeyCustomEndpoints             = "custom_endpoints"              // 自定义端点列表（JSON 数组）
 
 	// 默认配置
-	SettingKeyDefaultConcurrency   = "default_concurrency"   // 新用户默认并发量
-	SettingKeyDefaultBalance       = "default_balance"       // 新用户默认余额
-	SettingKeyDefaultSubscriptions = "default_subscriptions" // 新用户默认订阅列表（JSON）
+	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量
+	SettingKeyDefaultBalance       = "default_balance"        // 新用户默认余额
+	SettingKeyDefaultSubscriptions = "default_subscriptions"  // 新用户默认订阅列表（JSON）
+	SettingKeyDefaultUserRPMLimit  = "default_user_rpm_limit" // 新用户默认 RPM 限制（0 = 不限制）
+
+	// 第三方认证来源默认授予配置
+	SettingKeyAuthSourceDefaultEmailBalance            = "auth_source_default_email_balance"
+	SettingKeyAuthSourceDefaultEmailConcurrency        = "auth_source_default_email_concurrency"
+	SettingKeyAuthSourceDefaultEmailSubscriptions      = "auth_source_default_email_subscriptions"
+	SettingKeyAuthSourceDefaultEmailGrantOnSignup      = "auth_source_default_email_grant_on_signup"
+	SettingKeyAuthSourceDefaultEmailGrantOnFirstBind   = "auth_source_default_email_grant_on_first_bind"
+	SettingKeyAuthSourceDefaultLinuxDoBalance          = "auth_source_default_linuxdo_balance"
+	SettingKeyAuthSourceDefaultLinuxDoConcurrency      = "auth_source_default_linuxdo_concurrency"
+	SettingKeyAuthSourceDefaultLinuxDoSubscriptions    = "auth_source_default_linuxdo_subscriptions"
+	SettingKeyAuthSourceDefaultLinuxDoGrantOnSignup    = "auth_source_default_linuxdo_grant_on_signup"
+	SettingKeyAuthSourceDefaultLinuxDoGrantOnFirstBind = "auth_source_default_linuxdo_grant_on_first_bind"
+	SettingKeyAuthSourceDefaultOIDCBalance             = "auth_source_default_oidc_balance"
+	SettingKeyAuthSourceDefaultOIDCConcurrency         = "auth_source_default_oidc_concurrency"
+	SettingKeyAuthSourceDefaultOIDCSubscriptions       = "auth_source_default_oidc_subscriptions"
+	SettingKeyAuthSourceDefaultOIDCGrantOnSignup       = "auth_source_default_oidc_grant_on_signup"
+	SettingKeyAuthSourceDefaultOIDCGrantOnFirstBind    = "auth_source_default_oidc_grant_on_first_bind"
+	SettingKeyAuthSourceDefaultWeChatBalance           = "auth_source_default_wechat_balance"
+	SettingKeyAuthSourceDefaultWeChatConcurrency       = "auth_source_default_wechat_concurrency"
+	SettingKeyAuthSourceDefaultWeChatSubscriptions     = "auth_source_default_wechat_subscriptions"
+	SettingKeyAuthSourceDefaultWeChatGrantOnSignup     = "auth_source_default_wechat_grant_on_signup"
+	SettingKeyAuthSourceDefaultWeChatGrantOnFirstBind  = "auth_source_default_wechat_grant_on_first_bind"
+	SettingKeyForceEmailOnThirdPartySignup             = "force_email_on_third_party_signup"
 
 	// 管理员 API Key
 	SettingKeyAdminAPIKey = "admin_api_key" // 全局管理员 API Key（用于外部系统集成）
@@ -201,27 +273,6 @@ const (
 	SettingKeyBetaPolicySettings = "beta_policy_settings"
 
 	// =========================
-	// Sora S3 存储配置
-	// =========================
-
-	SettingKeySoraS3Enabled         = "sora_s3_enabled"           // 是否启用 Sora S3 存储
-	SettingKeySoraS3Endpoint        = "sora_s3_endpoint"          // S3 端点地址
-	SettingKeySoraS3Region          = "sora_s3_region"            // S3 区域
-	SettingKeySoraS3Bucket          = "sora_s3_bucket"            // S3 存储桶名称
-	SettingKeySoraS3AccessKeyID     = "sora_s3_access_key_id"     // S3 Access Key ID
-	SettingKeySoraS3SecretAccessKey = "sora_s3_secret_access_key" // S3 Secret Access Key（加密存储）
-	SettingKeySoraS3Prefix          = "sora_s3_prefix"            // S3 对象键前缀
-	SettingKeySoraS3ForcePathStyle  = "sora_s3_force_path_style"  // 是否强制 Path Style（兼容 MinIO 等）
-	SettingKeySoraS3CDNURL          = "sora_s3_cdn_url"           // CDN 加速 URL（可选）
-	SettingKeySoraS3Profiles        = "sora_s3_profiles"          // Sora S3 多配置（JSON）
-
-	// =========================
-	// Sora 用户存储配额
-	// =========================
-
-	SettingKeySoraDefaultStorageQuotaBytes = "sora_default_storage_quota_bytes" // 新用户默认 Sora 存储配额（字节）
-
-	// =========================
 	// Claude Code Version Check
 	// =========================
 
@@ -242,6 +293,20 @@ const (
 	SettingKeyEnableFingerprintUnification = "enable_fingerprint_unification"
 	// SettingKeyEnableMetadataPassthrough 是否透传客户端原始 metadata.user_id（默认 false）
 	SettingKeyEnableMetadataPassthrough = "enable_metadata_passthrough"
+	// SettingKeyEnableCCHSigning 是否对 billing header 中的 cch 进行 xxHash64 签名（默认 false）
+	SettingKeyEnableCCHSigning = "enable_cch_signing"
+
+	// Balance Low Notification
+	SettingKeyBalanceLowNotifyEnabled     = "balance_low_notify_enabled"      // 全局开关
+	SettingKeyBalanceLowNotifyThreshold   = "balance_low_notify_threshold"    // 默认阈值（USD）
+	SettingKeyBalanceLowNotifyRechargeURL = "balance_low_notify_recharge_url" // 充值页面 URL
+
+	// Account Quota Notification
+	SettingKeyAccountQuotaNotifyEnabled = "account_quota_notify_enabled" // 全局开关
+	SettingKeyAccountQuotaNotifyEmails  = "account_quota_notify_emails"  // 管理员通知邮箱列表（JSON 数组）
+
+	// Web Search Emulation
+	SettingKeyWebSearchEmulationConfig = "web_search_emulation_config" // JSON 配置
 )
 
 // AdminAPIKeyPrefix is the prefix for admin API keys (distinct from user "sk-" keys).

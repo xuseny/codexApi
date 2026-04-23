@@ -33,6 +33,8 @@ func ProvideAdminHandlers(
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
 	apiKeyHandler *admin.AdminAPIKeyHandler,
 	scheduledTestHandler *admin.ScheduledTestHandler,
+	channelHandler *admin.ChannelHandler,
+	paymentHandler *admin.PaymentHandler,
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:             dashboardHandler,
@@ -59,6 +61,8 @@ func ProvideAdminHandlers(
 		TLSFingerprintProfile: tlsFingerprintProfileHandler,
 		APIKey:                apiKeyHandler,
 		ScheduledTest:         scheduledTestHandler,
+		Channel:               channelHandler,
+		Payment:               paymentHandler,
 	}
 }
 
@@ -88,24 +92,28 @@ func ProvideHandlers(
 	soraClientHandler *SoraClientHandler,
 	settingHandler *SettingHandler,
 	totpHandler *TotpHandler,
+	paymentHandler *PaymentHandler,
+	paymentWebhookHandler *PaymentWebhookHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
 	return &Handlers{
-		Auth:          authHandler,
-		User:          userHandler,
-		APIKey:        apiKeyHandler,
-		Usage:         usageHandler,
-		Redeem:        redeemHandler,
-		Subscription:  subscriptionHandler,
-		Announcement:  announcementHandler,
-		Admin:         adminHandlers,
-		Gateway:       gatewayHandler,
-		OpenAIGateway: openaiGatewayHandler,
-		SoraGateway:   soraGatewayHandler,
-		SoraClient:    soraClientHandler,
-		Setting:       settingHandler,
-		Totp:          totpHandler,
+		Auth:           authHandler,
+		User:           userHandler,
+		APIKey:         apiKeyHandler,
+		Usage:          usageHandler,
+		Redeem:         redeemHandler,
+		Subscription:   subscriptionHandler,
+		Announcement:   announcementHandler,
+		Admin:          adminHandlers,
+		Gateway:        gatewayHandler,
+		OpenAIGateway:  openaiGatewayHandler,
+		SoraGateway:    soraGatewayHandler,
+		SoraClient:     soraClientHandler,
+		Setting:        settingHandler,
+		Totp:           totpHandler,
+		Payment:        paymentHandler,
+		PaymentWebhook: paymentWebhookHandler,
 	}
 }
 
@@ -122,8 +130,11 @@ var ProviderSet = wire.NewSet(
 	NewGatewayHandler,
 	NewOpenAIGatewayHandler,
 	NewSoraGatewayHandler,
+	NewSoraClientHandler,
 	NewTotpHandler,
 	ProvideSettingHandler,
+	NewPaymentHandler,
+	NewPaymentWebhookHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
@@ -150,6 +161,8 @@ var ProviderSet = wire.NewSet(
 	admin.NewTLSFingerprintProfileHandler,
 	admin.NewAdminAPIKeyHandler,
 	admin.NewScheduledTestHandler,
+	admin.NewChannelHandler,
+	admin.NewPaymentHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

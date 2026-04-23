@@ -6,6 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Toast, ToastType, PublicSettings } from '@/types'
+import { i18n } from '@/i18n'
 import {
   checkUpdates as checkUpdatesAPI,
   type VersionInfo,
@@ -209,7 +210,10 @@ export const useAppStore = defineStore('app', () => {
     try {
       return await operation()
     } catch (error) {
-      const message = errorMessage || (error as { message?: string }).message || 'An error occurred'
+      const message =
+        errorMessage ||
+        (error as { message?: string }).message ||
+        i18n.global.t('common.unknownError')
       showError(message)
       return null
     } finally {
@@ -284,6 +288,9 @@ export const useAppStore = defineStore('app', () => {
    * Apply settings to store state (internal helper to avoid code duplication)
    */
   function applySettings(config: PublicSettings): void {
+    if (typeof window !== 'undefined') {
+      window.__APP_CONFIG__ = { ...config }
+    }
     cachedPublicSettings.value = config
     siteName.value = config.site_name || 'Sub2API'
     siteLogo.value = config.site_logo || ''
@@ -313,6 +320,7 @@ export const useAppStore = defineStore('app', () => {
       return {
         registration_enabled: false,
         email_verify_enabled: false,
+        force_email_on_third_party_signup: false,
         registration_email_suffix_whitelist: [],
         promo_code_enabled: true,
         password_reset_enabled: false,
@@ -327,14 +335,24 @@ export const useAppStore = defineStore('app', () => {
         doc_url: docUrl.value,
         home_content: '',
         hide_ccs_import_button: false,
-        purchase_subscription_enabled: false,
-        purchase_subscription_url: '',
+        payment_enabled: false,
+        sora_client_enabled: false,
+        table_default_page_size: 20,
+        table_page_size_options: [10, 20, 50, 100],
         custom_menu_items: [],
         custom_endpoints: [],
         linuxdo_oauth_enabled: false,
-        sora_client_enabled: false,
+        wechat_oauth_enabled: false,
+        wechat_oauth_open_enabled: false,
+        wechat_oauth_mp_enabled: false,
+        wechat_oauth_mobile_enabled: false,
+        oidc_oauth_enabled: false,
+        oidc_oauth_provider_name: 'OIDC',
         backend_mode_enabled: false,
-        version: siteVersion.value
+        version: siteVersion.value,
+        balance_low_notify_enabled: false,
+        account_quota_notify_enabled: false,
+        balance_low_notify_threshold: 0,
       }
     }
 

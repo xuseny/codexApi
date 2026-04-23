@@ -18,6 +18,9 @@ const (
 	BlockTypeFunction
 )
 
+// UsageMapHook is a callback that can modify usage data before it's emitted in SSE events.
+type UsageMapHook func(usageMap map[string]any)
+
 // StreamingProcessor 流式响应处理器
 type StreamingProcessor struct {
 	blockType         BlockType
@@ -30,11 +33,13 @@ type StreamingProcessor struct {
 	originalModel     string
 	webSearchQueries  []string
 	groundingChunks   []GeminiGroundingChunk
+	usageMapHook      UsageMapHook
 
 	// 累计 usage
-	inputTokens     int
-	outputTokens    int
-	cacheReadTokens int
+	inputTokens       int
+	outputTokens      int
+	cacheReadTokens   int
+	imageOutputTokens int
 }
 
 // NewStreamingProcessor 创建流式响应处理器
@@ -43,6 +48,28 @@ func NewStreamingProcessor(originalModel string) *StreamingProcessor {
 		blockType:     BlockTypeNone,
 		originalModel: originalModel,
 	}
+}
+
+// SetUsageMapHook sets an optional hook that modifies usage maps before they are emitted.
+func (p *StreamingProcessor) SetUsageMapHook(fn UsageMapHook) {
+	p.usageMapHook = fn
+}
+
+func usageToMap(u ClaudeUsage) map[string]any {
+	m := map[string]any{
+		"input_tokens":  u.InputTokens,
+		"output_tokens": u.OutputTokens,
+	}
+	if u.CacheCreationInputTokens > 0 {
+		m["cache_creation_input_tokens"] = u.CacheCreationInputTokens
+	}
+	if u.CacheReadInputTokens > 0 {
+		m["cache_read_input_tokens"] = u.CacheReadInputTokens
+	}
+	if u.ImageOutputTokens > 0 {
+		m["image_output_tokens"] = u.ImageOutputTokens
+	}
+	return m
 }
 
 // ProcessLine 处理 SSE 行，返回 Claude SSE 事件
@@ -87,6 +114,7 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 		p.inputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
 		p.outputTokens = geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount
 		p.cacheReadTokens = cached
+		p.imageOutputTokens = geminiResp.UsageMetadata.ImageOutputTokens()
 	}
 
 	// 处理 parts
@@ -127,6 +155,7 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 		InputTokens:          p.inputTokens,
 		OutputTokens:         p.outputTokens,
 		CacheReadInputTokens: p.cacheReadTokens,
+		ImageOutputTokens:    p.imageOutputTokens,
 	}
 
 	if !p.messageStartSent {
@@ -158,6 +187,7 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 		usage.InputTokens = v1Resp.Response.UsageMetadata.PromptTokenCount - cached
 		usage.OutputTokens = v1Resp.Response.UsageMetadata.CandidatesTokenCount + v1Resp.Response.UsageMetadata.ThoughtsTokenCount
 		usage.CacheReadInputTokens = cached
+		usage.ImageOutputTokens = v1Resp.Response.UsageMetadata.ImageOutputTokens()
 	}
 
 	responseID := v1Resp.ResponseID
@@ -168,6 +198,13 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 		responseID = "msg_" + generateRandomID()
 	}
 
+	var usageValue any = usage
+	if p.usageMapHook != nil {
+		usageMap := usageToMap(usage)
+		p.usageMapHook(usageMap)
+		usageValue = usageMap
+	}
+
 	message := map[string]any{
 		"id":            responseID,
 		"type":          "message",
@@ -176,7 +213,7 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 		"model":         p.originalModel,
 		"stop_reason":   nil,
 		"stop_sequence": nil,
-		"usage":         usage,
+		"usage":         usageValue,
 	}
 
 	event := map[string]any{
@@ -485,6 +522,14 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 		InputTokens:          p.inputTokens,
 		OutputTokens:         p.outputTokens,
 		CacheReadInputTokens: p.cacheReadTokens,
+		ImageOutputTokens:    p.imageOutputTokens,
+	}
+
+	var usageValue any = usage
+	if p.usageMapHook != nil {
+		usageMap := usageToMap(usage)
+		p.usageMapHook(usageMap)
+		usageValue = usageMap
 	}
 
 	deltaEvent := map[string]any{
@@ -493,7 +538,7 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 			"stop_reason":   stopReason,
 			"stop_sequence": nil,
 		},
-		"usage": usage,
+		"usage": usageValue,
 	}
 
 	_, _ = result.Write(p.formatSSE("message_delta", deltaEvent))

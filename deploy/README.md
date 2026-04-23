@@ -22,6 +22,10 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
 | `sub2api.service` | Systemd service unit file |
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
+| `BINARY_UPDATE_CN.md` | 二进制部署更新文档（中文） |
+| `BINARY_SCALE_OUT_CN.md` | 二进制双机扩容文档（中文） |
+| `BINARY_MAIN_SERVER_MIGRATION_CN.md` | 主服务器迁移文档（中文） |
+| `服务器扩容手册.md` | 多节点扩容手册（中文） |
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
 | `config.example.yaml` | Example configuration file |
 

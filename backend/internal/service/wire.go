@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
@@ -37,10 +39,14 @@ func ProvideEmailQueueService(emailService *EmailService) *EmailQueueService {
 	return NewEmailQueueService(emailService, 3)
 }
 
+// ProvideOAuthRefreshAPI creates OAuthRefreshAPI with the default lock TTL.
+func ProvideOAuthRefreshAPI(accountRepo AccountRepository, tokenCache GeminiTokenCache) *OAuthRefreshAPI {
+	return NewOAuthRefreshAPI(accountRepo, tokenCache)
+}
+
 // ProvideTokenRefreshService creates and starts TokenRefreshService
 func ProvideTokenRefreshService(
 	accountRepo AccountRepository,
-	soraAccountRepo SoraAccountRepository, // Sora 扩展表仓储，用于双表同步
 	oauthService *OAuthService,
 	openaiOAuthService *OpenAIOAuthService,
 	geminiOAuthService *GeminiOAuthService,
@@ -54,8 +60,6 @@ func ProvideTokenRefreshService(
 	refreshAPI *OAuthRefreshAPI,
 ) *TokenRefreshService {
 	svc := NewTokenRefreshService(accountRepo, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, cacheInvalidator, schedulerCache, cfg, tempUnschedCache)
-	// 注入 Sora 账号扩展表仓储，用于 OpenAI Token 刷新时同步 sora_accounts 表
-	svc.SetSoraAccountRepo(soraAccountRepo)
 	// 注入 OpenAI privacy opt-out 依赖
 	svc.SetPrivacyDeps(privacyClientFactory, proxyRepo)
 	// 注入统一 OAuth 刷新 API（消除 TokenRefreshService 与 TokenProvider 之间的竞争条件）
@@ -211,11 +215,13 @@ func ProvideRateLimitService(
 	geminiQuotaService *GeminiQuotaService,
 	tempUnschedCache TempUnschedCache,
 	timeoutCounterCache TimeoutCounterCache,
+	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
+	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	return svc
@@ -279,30 +285,6 @@ func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 	sink.Start()
 	logger.SetSink(sink)
 	return sink
-}
-
-// ProvideSoraMediaStorage 初始化 Sora 媒体存储
-func ProvideSoraMediaStorage(cfg *config.Config) *SoraMediaStorage {
-	return NewSoraMediaStorage(cfg)
-}
-
-func ProvideSoraSDKClient(
-	cfg *config.Config,
-	httpUpstream HTTPUpstream,
-	tokenProvider *OpenAITokenProvider,
-	accountRepo AccountRepository,
-	soraAccountRepo SoraAccountRepository,
-) *SoraSDKClient {
-	client := NewSoraSDKClient(cfg, httpUpstream, tokenProvider)
-	client.SetAccountRepositories(accountRepo, soraAccountRepo)
-	return client
-}
-
-// ProvideSoraMediaCleanupService 创建并启动 Sora 媒体清理服务
-func ProvideSoraMediaCleanupService(storage *SoraMediaStorage, cfg *config.Config) *SoraMediaCleanupService {
-	svc := NewSoraMediaCleanupService(storage, cfg)
-	svc.Start()
-	return svc
 }
 
 func buildIdempotencyConfig(cfg *config.Config) IdempotencyConfig {
@@ -398,11 +380,41 @@ func ProvideBackupService(
 	return svc
 }
 
-// ProvideSettingService wires SettingService with group reader for default subscription validation.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, cfg *config.Config) *SettingService {
+// ProvideSettingService wires SettingService with group reader and proxy repo.
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
+	svc.SetProxyRepository(proxyRepo)
 	return svc
+}
+
+// ProvideBillingCacheService wires BillingCacheService with its RPM dependencies.
+func ProvideBillingCacheService(
+	cache BillingCache,
+	userRepo UserRepository,
+	subRepo UserSubscriptionRepository,
+	apiKeyRepo APIKeyRepository,
+	rpmCache UserRPMCache,
+	rateRepo UserGroupRateRepository,
+	cfg *config.Config,
+) *BillingCacheService {
+	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg)
+}
+
+func ProvideSoraSDKClient(
+	cfg *config.Config,
+	httpUpstream HTTPUpstream,
+	openAITokenProvider *OpenAITokenProvider,
+	accountRepo AccountRepository,
+	soraAccountRepo SoraAccountRepository,
+) *SoraSDKClient {
+	client := NewSoraSDKClient(cfg, httpUpstream, openAITokenProvider)
+	client.SetAccountRepositories(accountRepo, soraAccountRepo)
+	return client
+}
+
+func ProvideSoraClient(client *SoraSDKClient) SoraClient {
+	return client
 }
 
 // ProviderSet is the Wire provider set for all services
@@ -422,16 +434,16 @@ var ProviderSet = wire.NewSet(
 	NewDashboardService,
 	ProvidePricingService,
 	NewBillingService,
-	NewBillingCacheService,
+	ProvideBillingCacheService,
 	NewAnnouncementService,
 	NewAdminService,
 	NewGatewayService,
-	ProvideSoraMediaStorage,
-	ProvideSoraMediaCleanupService,
-	ProvideSoraSDKClient,
-	wire.Bind(new(SoraClient), new(*SoraSDKClient)),
-	NewSoraGatewayService,
 	NewOpenAIGatewayService,
+	NewSoraQuotaService,
+	NewSoraS3Storage,
+	NewSoraMediaStorage,
+	NewSoraGenerationService,
+	NewSoraGatewayService,
 	NewOAuthService,
 	NewOpenAIOAuthService,
 	NewGeminiOAuthService,
@@ -439,12 +451,14 @@ var ProviderSet = wire.NewSet(
 	NewCompositeTokenCacheInvalidator,
 	wire.Bind(new(TokenCacheInvalidator), new(*CompositeTokenCacheInvalidator)),
 	NewAntigravityOAuthService,
-	NewOAuthRefreshAPI,
+	ProvideOAuthRefreshAPI,
 	ProvideGeminiTokenProvider,
 	NewGeminiMessagesCompatService,
 	ProvideAntigravityTokenProvider,
 	ProvideOpenAITokenProvider,
 	ProvideClaudeTokenProvider,
+	ProvideSoraSDKClient,
+	ProvideSoraClient,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
 	NewAccountUsageService,
@@ -491,4 +505,28 @@ var ProviderSet = wire.NewSet(
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewGroupCapacityService,
+	NewChannelService,
+	NewModelPricingResolver,
+	ProvidePaymentConfigService,
+	NewPaymentService,
+	ProvidePaymentOrderExpiryService,
+	ProvideBalanceNotifyService,
 )
+
+// ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named
+// payment.EncryptionKey type instead of raw []byte, avoiding Wire ambiguity.
+func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRepository, key payment.EncryptionKey) *PaymentConfigService {
+	return NewPaymentConfigService(entClient, settingRepo, []byte(key))
+}
+
+// ProvideBalanceNotifyService creates BalanceNotifyService
+func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository) *BalanceNotifyService {
+	return NewBalanceNotifyService(emailService, settingRepo, accountRepo)
+}
+
+// ProvidePaymentOrderExpiryService creates and starts PaymentOrderExpiryService.
+func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService) *PaymentOrderExpiryService {
+	svc := NewPaymentOrderExpiryService(paymentSvc, 60*time.Second)
+	svc.Start()
+	return svc
+}

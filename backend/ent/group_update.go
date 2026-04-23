@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
 // GroupUpdate is the builder for updating Group entities.
@@ -355,135 +356,6 @@ func (_u *GroupUpdate) ClearImagePrice4k() *GroupUpdate {
 	return _u
 }
 
-// SetSoraImagePrice360 sets the "sora_image_price_360" field.
-func (_u *GroupUpdate) SetSoraImagePrice360(v float64) *GroupUpdate {
-	_u.mutation.ResetSoraImagePrice360()
-	_u.mutation.SetSoraImagePrice360(v)
-	return _u
-}
-
-// SetNillableSoraImagePrice360 sets the "sora_image_price_360" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableSoraImagePrice360(v *float64) *GroupUpdate {
-	if v != nil {
-		_u.SetSoraImagePrice360(*v)
-	}
-	return _u
-}
-
-// AddSoraImagePrice360 adds value to the "sora_image_price_360" field.
-func (_u *GroupUpdate) AddSoraImagePrice360(v float64) *GroupUpdate {
-	_u.mutation.AddSoraImagePrice360(v)
-	return _u
-}
-
-// ClearSoraImagePrice360 clears the value of the "sora_image_price_360" field.
-func (_u *GroupUpdate) ClearSoraImagePrice360() *GroupUpdate {
-	_u.mutation.ClearSoraImagePrice360()
-	return _u
-}
-
-// SetSoraImagePrice540 sets the "sora_image_price_540" field.
-func (_u *GroupUpdate) SetSoraImagePrice540(v float64) *GroupUpdate {
-	_u.mutation.ResetSoraImagePrice540()
-	_u.mutation.SetSoraImagePrice540(v)
-	return _u
-}
-
-// SetNillableSoraImagePrice540 sets the "sora_image_price_540" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableSoraImagePrice540(v *float64) *GroupUpdate {
-	if v != nil {
-		_u.SetSoraImagePrice540(*v)
-	}
-	return _u
-}
-
-// AddSoraImagePrice540 adds value to the "sora_image_price_540" field.
-func (_u *GroupUpdate) AddSoraImagePrice540(v float64) *GroupUpdate {
-	_u.mutation.AddSoraImagePrice540(v)
-	return _u
-}
-
-// ClearSoraImagePrice540 clears the value of the "sora_image_price_540" field.
-func (_u *GroupUpdate) ClearSoraImagePrice540() *GroupUpdate {
-	_u.mutation.ClearSoraImagePrice540()
-	return _u
-}
-
-// SetSoraVideoPricePerRequest sets the "sora_video_price_per_request" field.
-func (_u *GroupUpdate) SetSoraVideoPricePerRequest(v float64) *GroupUpdate {
-	_u.mutation.ResetSoraVideoPricePerRequest()
-	_u.mutation.SetSoraVideoPricePerRequest(v)
-	return _u
-}
-
-// SetNillableSoraVideoPricePerRequest sets the "sora_video_price_per_request" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableSoraVideoPricePerRequest(v *float64) *GroupUpdate {
-	if v != nil {
-		_u.SetSoraVideoPricePerRequest(*v)
-	}
-	return _u
-}
-
-// AddSoraVideoPricePerRequest adds value to the "sora_video_price_per_request" field.
-func (_u *GroupUpdate) AddSoraVideoPricePerRequest(v float64) *GroupUpdate {
-	_u.mutation.AddSoraVideoPricePerRequest(v)
-	return _u
-}
-
-// ClearSoraVideoPricePerRequest clears the value of the "sora_video_price_per_request" field.
-func (_u *GroupUpdate) ClearSoraVideoPricePerRequest() *GroupUpdate {
-	_u.mutation.ClearSoraVideoPricePerRequest()
-	return _u
-}
-
-// SetSoraVideoPricePerRequestHd sets the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdate) SetSoraVideoPricePerRequestHd(v float64) *GroupUpdate {
-	_u.mutation.ResetSoraVideoPricePerRequestHd()
-	_u.mutation.SetSoraVideoPricePerRequestHd(v)
-	return _u
-}
-
-// SetNillableSoraVideoPricePerRequestHd sets the "sora_video_price_per_request_hd" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableSoraVideoPricePerRequestHd(v *float64) *GroupUpdate {
-	if v != nil {
-		_u.SetSoraVideoPricePerRequestHd(*v)
-	}
-	return _u
-}
-
-// AddSoraVideoPricePerRequestHd adds value to the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdate) AddSoraVideoPricePerRequestHd(v float64) *GroupUpdate {
-	_u.mutation.AddSoraVideoPricePerRequestHd(v)
-	return _u
-}
-
-// ClearSoraVideoPricePerRequestHd clears the value of the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdate) ClearSoraVideoPricePerRequestHd() *GroupUpdate {
-	_u.mutation.ClearSoraVideoPricePerRequestHd()
-	return _u
-}
-
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (_u *GroupUpdate) SetSoraStorageQuotaBytes(v int64) *GroupUpdate {
-	_u.mutation.ResetSoraStorageQuotaBytes()
-	_u.mutation.SetSoraStorageQuotaBytes(v)
-	return _u
-}
-
-// SetNillableSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field if the given value is not nil.
-func (_u *GroupUpdate) SetNillableSoraStorageQuotaBytes(v *int64) *GroupUpdate {
-	if v != nil {
-		_u.SetSoraStorageQuotaBytes(*v)
-	}
-	return _u
-}
-
-// AddSoraStorageQuotaBytes adds value to the "sora_storage_quota_bytes" field.
-func (_u *GroupUpdate) AddSoraStorageQuotaBytes(v int64) *GroupUpdate {
-	_u.mutation.AddSoraStorageQuotaBytes(v)
-	return _u
-}
-
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdate) SetClaudeCodeOnly(v bool) *GroupUpdate {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -639,6 +511,34 @@ func (_u *GroupUpdate) SetNillableAllowMessagesDispatch(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetRequireOauthOnly sets the "require_oauth_only" field.
+func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
+	_u.mutation.SetRequireOauthOnly(v)
+	return _u
+}
+
+// SetNillableRequireOauthOnly sets the "require_oauth_only" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableRequireOauthOnly(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetRequireOauthOnly(*v)
+	}
+	return _u
+}
+
+// SetRequirePrivacySet sets the "require_privacy_set" field.
+func (_u *GroupUpdate) SetRequirePrivacySet(v bool) *GroupUpdate {
+	_u.mutation.SetRequirePrivacySet(v)
+	return _u
+}
+
+// SetNillableRequirePrivacySet sets the "require_privacy_set" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableRequirePrivacySet(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetRequirePrivacySet(*v)
+	}
+	return _u
+}
+
 // SetDefaultMappedModel sets the "default_mapped_model" field.
 func (_u *GroupUpdate) SetDefaultMappedModel(v string) *GroupUpdate {
 	_u.mutation.SetDefaultMappedModel(v)
@@ -650,6 +550,41 @@ func (_u *GroupUpdate) SetNillableDefaultMappedModel(v *string) *GroupUpdate {
 	if v != nil {
 		_u.SetDefaultMappedModel(*v)
 	}
+	return _u
+}
+
+// SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
+func (_u *GroupUpdate) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupUpdate {
+	_u.mutation.SetMessagesDispatchModelConfig(v)
+	return _u
+}
+
+// SetNillableMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableMessagesDispatchModelConfig(v *domain.OpenAIMessagesDispatchModelConfig) *GroupUpdate {
+	if v != nil {
+		_u.SetMessagesDispatchModelConfig(*v)
+	}
+	return _u
+}
+
+// SetRpmLimit sets the "rpm_limit" field.
+func (_u *GroupUpdate) SetRpmLimit(v int) *GroupUpdate {
+	_u.mutation.ResetRpmLimit()
+	_u.mutation.SetRpmLimit(v)
+	return _u
+}
+
+// SetNillableRpmLimit sets the "rpm_limit" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableRpmLimit(v *int) *GroupUpdate {
+	if v != nil {
+		_u.SetRpmLimit(*v)
+	}
+	return _u
+}
+
+// AddRpmLimit adds value to the "rpm_limit" field.
+func (_u *GroupUpdate) AddRpmLimit(v int) *GroupUpdate {
+	_u.mutation.AddRpmLimit(v)
 	return _u
 }
 
@@ -1054,48 +989,6 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.ImagePrice4kCleared() {
 		_spec.ClearField(group.FieldImagePrice4k, field.TypeFloat64)
 	}
-	if value, ok := _u.mutation.SoraImagePrice360(); ok {
-		_spec.SetField(group.FieldSoraImagePrice360, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraImagePrice360(); ok {
-		_spec.AddField(group.FieldSoraImagePrice360, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraImagePrice360Cleared() {
-		_spec.ClearField(group.FieldSoraImagePrice360, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraImagePrice540(); ok {
-		_spec.SetField(group.FieldSoraImagePrice540, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraImagePrice540(); ok {
-		_spec.AddField(group.FieldSoraImagePrice540, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraImagePrice540Cleared() {
-		_spec.ClearField(group.FieldSoraImagePrice540, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraVideoPricePerRequest(); ok {
-		_spec.SetField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraVideoPricePerRequest(); ok {
-		_spec.AddField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraVideoPricePerRequestCleared() {
-		_spec.ClearField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraVideoPricePerRequestHd(); ok {
-		_spec.SetField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraVideoPricePerRequestHd(); ok {
-		_spec.AddField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraVideoPricePerRequestHdCleared() {
-		_spec.ClearField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraStorageQuotaBytes(); ok {
-		_spec.SetField(group.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraStorageQuotaBytes(); ok {
-		_spec.AddField(group.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
-	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 	}
@@ -1146,8 +1039,23 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AllowMessagesDispatch(); ok {
 		_spec.SetField(group.FieldAllowMessagesDispatch, field.TypeBool, value)
 	}
+	if value, ok := _u.mutation.RequireOauthOnly(); ok {
+		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RequirePrivacySet(); ok {
+		_spec.SetField(group.FieldRequirePrivacySet, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.DefaultMappedModel(); ok {
 		_spec.SetField(group.FieldDefaultMappedModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.MessagesDispatchModelConfig(); ok {
+		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.RpmLimit(); ok {
+		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRpmLimit(); ok {
+		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1783,135 +1691,6 @@ func (_u *GroupUpdateOne) ClearImagePrice4k() *GroupUpdateOne {
 	return _u
 }
 
-// SetSoraImagePrice360 sets the "sora_image_price_360" field.
-func (_u *GroupUpdateOne) SetSoraImagePrice360(v float64) *GroupUpdateOne {
-	_u.mutation.ResetSoraImagePrice360()
-	_u.mutation.SetSoraImagePrice360(v)
-	return _u
-}
-
-// SetNillableSoraImagePrice360 sets the "sora_image_price_360" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableSoraImagePrice360(v *float64) *GroupUpdateOne {
-	if v != nil {
-		_u.SetSoraImagePrice360(*v)
-	}
-	return _u
-}
-
-// AddSoraImagePrice360 adds value to the "sora_image_price_360" field.
-func (_u *GroupUpdateOne) AddSoraImagePrice360(v float64) *GroupUpdateOne {
-	_u.mutation.AddSoraImagePrice360(v)
-	return _u
-}
-
-// ClearSoraImagePrice360 clears the value of the "sora_image_price_360" field.
-func (_u *GroupUpdateOne) ClearSoraImagePrice360() *GroupUpdateOne {
-	_u.mutation.ClearSoraImagePrice360()
-	return _u
-}
-
-// SetSoraImagePrice540 sets the "sora_image_price_540" field.
-func (_u *GroupUpdateOne) SetSoraImagePrice540(v float64) *GroupUpdateOne {
-	_u.mutation.ResetSoraImagePrice540()
-	_u.mutation.SetSoraImagePrice540(v)
-	return _u
-}
-
-// SetNillableSoraImagePrice540 sets the "sora_image_price_540" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableSoraImagePrice540(v *float64) *GroupUpdateOne {
-	if v != nil {
-		_u.SetSoraImagePrice540(*v)
-	}
-	return _u
-}
-
-// AddSoraImagePrice540 adds value to the "sora_image_price_540" field.
-func (_u *GroupUpdateOne) AddSoraImagePrice540(v float64) *GroupUpdateOne {
-	_u.mutation.AddSoraImagePrice540(v)
-	return _u
-}
-
-// ClearSoraImagePrice540 clears the value of the "sora_image_price_540" field.
-func (_u *GroupUpdateOne) ClearSoraImagePrice540() *GroupUpdateOne {
-	_u.mutation.ClearSoraImagePrice540()
-	return _u
-}
-
-// SetSoraVideoPricePerRequest sets the "sora_video_price_per_request" field.
-func (_u *GroupUpdateOne) SetSoraVideoPricePerRequest(v float64) *GroupUpdateOne {
-	_u.mutation.ResetSoraVideoPricePerRequest()
-	_u.mutation.SetSoraVideoPricePerRequest(v)
-	return _u
-}
-
-// SetNillableSoraVideoPricePerRequest sets the "sora_video_price_per_request" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableSoraVideoPricePerRequest(v *float64) *GroupUpdateOne {
-	if v != nil {
-		_u.SetSoraVideoPricePerRequest(*v)
-	}
-	return _u
-}
-
-// AddSoraVideoPricePerRequest adds value to the "sora_video_price_per_request" field.
-func (_u *GroupUpdateOne) AddSoraVideoPricePerRequest(v float64) *GroupUpdateOne {
-	_u.mutation.AddSoraVideoPricePerRequest(v)
-	return _u
-}
-
-// ClearSoraVideoPricePerRequest clears the value of the "sora_video_price_per_request" field.
-func (_u *GroupUpdateOne) ClearSoraVideoPricePerRequest() *GroupUpdateOne {
-	_u.mutation.ClearSoraVideoPricePerRequest()
-	return _u
-}
-
-// SetSoraVideoPricePerRequestHd sets the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdateOne) SetSoraVideoPricePerRequestHd(v float64) *GroupUpdateOne {
-	_u.mutation.ResetSoraVideoPricePerRequestHd()
-	_u.mutation.SetSoraVideoPricePerRequestHd(v)
-	return _u
-}
-
-// SetNillableSoraVideoPricePerRequestHd sets the "sora_video_price_per_request_hd" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableSoraVideoPricePerRequestHd(v *float64) *GroupUpdateOne {
-	if v != nil {
-		_u.SetSoraVideoPricePerRequestHd(*v)
-	}
-	return _u
-}
-
-// AddSoraVideoPricePerRequestHd adds value to the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdateOne) AddSoraVideoPricePerRequestHd(v float64) *GroupUpdateOne {
-	_u.mutation.AddSoraVideoPricePerRequestHd(v)
-	return _u
-}
-
-// ClearSoraVideoPricePerRequestHd clears the value of the "sora_video_price_per_request_hd" field.
-func (_u *GroupUpdateOne) ClearSoraVideoPricePerRequestHd() *GroupUpdateOne {
-	_u.mutation.ClearSoraVideoPricePerRequestHd()
-	return _u
-}
-
-// SetSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field.
-func (_u *GroupUpdateOne) SetSoraStorageQuotaBytes(v int64) *GroupUpdateOne {
-	_u.mutation.ResetSoraStorageQuotaBytes()
-	_u.mutation.SetSoraStorageQuotaBytes(v)
-	return _u
-}
-
-// SetNillableSoraStorageQuotaBytes sets the "sora_storage_quota_bytes" field if the given value is not nil.
-func (_u *GroupUpdateOne) SetNillableSoraStorageQuotaBytes(v *int64) *GroupUpdateOne {
-	if v != nil {
-		_u.SetSoraStorageQuotaBytes(*v)
-	}
-	return _u
-}
-
-// AddSoraStorageQuotaBytes adds value to the "sora_storage_quota_bytes" field.
-func (_u *GroupUpdateOne) AddSoraStorageQuotaBytes(v int64) *GroupUpdateOne {
-	_u.mutation.AddSoraStorageQuotaBytes(v)
-	return _u
-}
-
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdateOne) SetClaudeCodeOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -2067,6 +1846,34 @@ func (_u *GroupUpdateOne) SetNillableAllowMessagesDispatch(v *bool) *GroupUpdate
 	return _u
 }
 
+// SetRequireOauthOnly sets the "require_oauth_only" field.
+func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
+	_u.mutation.SetRequireOauthOnly(v)
+	return _u
+}
+
+// SetNillableRequireOauthOnly sets the "require_oauth_only" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableRequireOauthOnly(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetRequireOauthOnly(*v)
+	}
+	return _u
+}
+
+// SetRequirePrivacySet sets the "require_privacy_set" field.
+func (_u *GroupUpdateOne) SetRequirePrivacySet(v bool) *GroupUpdateOne {
+	_u.mutation.SetRequirePrivacySet(v)
+	return _u
+}
+
+// SetNillableRequirePrivacySet sets the "require_privacy_set" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableRequirePrivacySet(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetRequirePrivacySet(*v)
+	}
+	return _u
+}
+
 // SetDefaultMappedModel sets the "default_mapped_model" field.
 func (_u *GroupUpdateOne) SetDefaultMappedModel(v string) *GroupUpdateOne {
 	_u.mutation.SetDefaultMappedModel(v)
@@ -2078,6 +1885,41 @@ func (_u *GroupUpdateOne) SetNillableDefaultMappedModel(v *string) *GroupUpdateO
 	if v != nil {
 		_u.SetDefaultMappedModel(*v)
 	}
+	return _u
+}
+
+// SetMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field.
+func (_u *GroupUpdateOne) SetMessagesDispatchModelConfig(v domain.OpenAIMessagesDispatchModelConfig) *GroupUpdateOne {
+	_u.mutation.SetMessagesDispatchModelConfig(v)
+	return _u
+}
+
+// SetNillableMessagesDispatchModelConfig sets the "messages_dispatch_model_config" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableMessagesDispatchModelConfig(v *domain.OpenAIMessagesDispatchModelConfig) *GroupUpdateOne {
+	if v != nil {
+		_u.SetMessagesDispatchModelConfig(*v)
+	}
+	return _u
+}
+
+// SetRpmLimit sets the "rpm_limit" field.
+func (_u *GroupUpdateOne) SetRpmLimit(v int) *GroupUpdateOne {
+	_u.mutation.ResetRpmLimit()
+	_u.mutation.SetRpmLimit(v)
+	return _u
+}
+
+// SetNillableRpmLimit sets the "rpm_limit" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableRpmLimit(v *int) *GroupUpdateOne {
+	if v != nil {
+		_u.SetRpmLimit(*v)
+	}
+	return _u
+}
+
+// AddRpmLimit adds value to the "rpm_limit" field.
+func (_u *GroupUpdateOne) AddRpmLimit(v int) *GroupUpdateOne {
+	_u.mutation.AddRpmLimit(v)
 	return _u
 }
 
@@ -2512,48 +2354,6 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if _u.mutation.ImagePrice4kCleared() {
 		_spec.ClearField(group.FieldImagePrice4k, field.TypeFloat64)
 	}
-	if value, ok := _u.mutation.SoraImagePrice360(); ok {
-		_spec.SetField(group.FieldSoraImagePrice360, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraImagePrice360(); ok {
-		_spec.AddField(group.FieldSoraImagePrice360, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraImagePrice360Cleared() {
-		_spec.ClearField(group.FieldSoraImagePrice360, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraImagePrice540(); ok {
-		_spec.SetField(group.FieldSoraImagePrice540, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraImagePrice540(); ok {
-		_spec.AddField(group.FieldSoraImagePrice540, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraImagePrice540Cleared() {
-		_spec.ClearField(group.FieldSoraImagePrice540, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraVideoPricePerRequest(); ok {
-		_spec.SetField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraVideoPricePerRequest(); ok {
-		_spec.AddField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraVideoPricePerRequestCleared() {
-		_spec.ClearField(group.FieldSoraVideoPricePerRequest, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraVideoPricePerRequestHd(); ok {
-		_spec.SetField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraVideoPricePerRequestHd(); ok {
-		_spec.AddField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64, value)
-	}
-	if _u.mutation.SoraVideoPricePerRequestHdCleared() {
-		_spec.ClearField(group.FieldSoraVideoPricePerRequestHd, field.TypeFloat64)
-	}
-	if value, ok := _u.mutation.SoraStorageQuotaBytes(); ok {
-		_spec.SetField(group.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
-	}
-	if value, ok := _u.mutation.AddedSoraStorageQuotaBytes(); ok {
-		_spec.AddField(group.FieldSoraStorageQuotaBytes, field.TypeInt64, value)
-	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
 	}
@@ -2604,8 +2404,23 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	if value, ok := _u.mutation.AllowMessagesDispatch(); ok {
 		_spec.SetField(group.FieldAllowMessagesDispatch, field.TypeBool, value)
 	}
+	if value, ok := _u.mutation.RequireOauthOnly(); ok {
+		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.RequirePrivacySet(); ok {
+		_spec.SetField(group.FieldRequirePrivacySet, field.TypeBool, value)
+	}
 	if value, ok := _u.mutation.DefaultMappedModel(); ok {
 		_spec.SetField(group.FieldDefaultMappedModel, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.MessagesDispatchModelConfig(); ok {
+		_spec.SetField(group.FieldMessagesDispatchModelConfig, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.RpmLimit(); ok {
+		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRpmLimit(); ok {
+		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

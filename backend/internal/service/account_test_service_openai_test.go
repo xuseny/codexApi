@@ -4,15 +4,60 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 )
+
+// --- shared test helpers ---
+
+type queuedHTTPUpstream struct {
+	responses []*http.Response
+	requests  []*http.Request
+	tlsFlags  []bool
+}
+
+func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	return nil, fmt.Errorf("unexpected Do call")
+}
+
+func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	u.requests = append(u.requests, req)
+	u.tlsFlags = append(u.tlsFlags, profile != nil)
+	if len(u.responses) == 0 {
+		return nil, fmt.Errorf("no mocked response")
+	}
+	resp := u.responses[0]
+	u.responses = u.responses[1:]
+	return resp, nil
+}
+
+func newJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// --- test functions ---
+
+func newTestContext() (*gin.Context, *httptest.ResponseRecorder) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/1/test", nil)
+	return c, rec
+}
 
 type openAIAccountTestRepo struct {
 	mockAccountRepoForGemini
@@ -34,7 +79,7 @@ func (r *openAIAccountTestRepo) SetRateLimited(_ context.Context, id int64, rese
 
 func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, recorder := newSoraTestContext()
+	ctx, recorder := newTestContext()
 
 	resp := newJSONResponse(http.StatusOK, "")
 	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
@@ -58,7 +103,7 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 		Credentials: map[string]any{"access_token": "test-token"},
 	}
 
-	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, repo.updatedExtra)
 	require.Equal(t, 42.0, repo.updatedExtra["codex_5h_used_percent"])
@@ -66,9 +111,9 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 
-func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimit(t *testing.T) {
+func TestAccountTestService_OpenAI429PersistsSnapshotWithoutRateLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := newSoraTestContext()
+	ctx, _ := newTestContext()
 
 	resp := newJSONResponse(http.StatusTooManyRequests, `{"error":{"type":"usage_limit_reached","message":"limit reached"}}`)
 	resp.Header.Set("x-codex-primary-used-percent", "100")
@@ -89,16 +134,13 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimit(t *testing.T) 
 		Credentials: map[string]any{"access_token": "test-token"},
 	}
 
-	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4")
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "")
 	require.Error(t, err)
 	require.NotEmpty(t, repo.updatedExtra)
 	require.Equal(t, 100.0, repo.updatedExtra["codex_5h_used_percent"])
-	require.Equal(t, int64(88), repo.rateLimitedID)
-	require.NotNil(t, repo.rateLimitedAt)
-	require.NotNil(t, account.RateLimitResetAt)
-	if account.RateLimitResetAt != nil && repo.rateLimitedAt != nil {
-		require.WithinDuration(t, *repo.rateLimitedAt, *account.RateLimitResetAt, time.Second)
-	}
+	require.Zero(t, repo.rateLimitedID)
+	require.Nil(t, repo.rateLimitedAt)
+	require.Nil(t, account.RateLimitResetAt)
 }
 
 func TestAccountTestService_OpenAIOAuthAddsCodexHeaders(t *testing.T) {

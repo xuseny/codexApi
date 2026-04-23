@@ -34,8 +34,6 @@ func RegisterAdminRoutes(
 
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h)
-		// Sora OAuth（实现复用 OpenAI OAuth 服务，入口独立）
-		registerSoraOAuthRoutes(admin, h)
 
 		// Gemini OAuth
 		registerGeminiOAuthRoutes(admin, h)
@@ -88,6 +86,9 @@ func RegisterAdminRoutes(
 
 		// 定时测试计划
 		registerScheduledTestRoutes(admin, h)
+
+		// 渠道管理
+		registerChannelRoutes(admin, h)
 	}
 }
 
@@ -223,6 +224,7 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		users.GET("", h.Admin.User.List)
 		users.GET("/:id", h.Admin.User.GetByID)
+		users.POST("/:id/auth-identities", h.Admin.User.BindAuthIdentity)
 		users.POST("", h.Admin.User.Create)
 		users.PUT("/:id", h.Admin.User.Update)
 		users.DELETE("/:id", h.Admin.User.Delete)
@@ -231,6 +233,7 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.GET("/:id/usage", h.Admin.User.GetUserUsage)
 		users.GET("/:id/balance-history", h.Admin.User.GetBalanceHistory)
 		users.POST("/:id/replace-group", h.Admin.User.ReplaceGroup)
+		users.GET("/:id/rpm-status", h.Admin.User.GetUserRPMStatus)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)
@@ -254,6 +257,8 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/:id/rate-multipliers", h.Admin.Group.GetGroupRateMultipliers)
 		groups.PUT("/:id/rate-multipliers", h.Admin.Group.BatchSetGroupRateMultipliers)
 		groups.DELETE("/:id/rate-multipliers", h.Admin.Group.ClearGroupRateMultipliers)
+		groups.PUT("/:id/rpm-overrides", h.Admin.Group.BatchSetGroupRPMOverrides)
+		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
 		groups.GET("/:id/api-keys", h.Admin.Group.GetGroupAPIKeys)
 	}
 }
@@ -327,19 +332,6 @@ func registerOpenAIOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		openai.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
 		openai.POST("/accounts/:id/refresh", h.Admin.OpenAIOAuth.RefreshAccountToken)
 		openai.POST("/create-from-oauth", h.Admin.OpenAIOAuth.CreateAccountFromOAuth)
-	}
-}
-
-func registerSoraOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
-	sora := admin.Group("/sora")
-	{
-		sora.POST("/generate-auth-url", h.Admin.OpenAIOAuth.GenerateAuthURL)
-		sora.POST("/exchange-code", h.Admin.OpenAIOAuth.ExchangeCode)
-		sora.POST("/refresh-token", h.Admin.OpenAIOAuth.RefreshToken)
-		sora.POST("/st2at", h.Admin.OpenAIOAuth.ExchangeSoraSessionToken)
-		sora.POST("/rt2at", h.Admin.OpenAIOAuth.RefreshToken)
-		sora.POST("/accounts/:id/refresh", h.Admin.OpenAIOAuth.RefreshAccountToken)
-		sora.POST("/create-from-oauth", h.Admin.OpenAIOAuth.CreateAccountFromOAuth)
 	}
 }
 
@@ -431,15 +423,11 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// Beta 策略配置
 		adminSettings.GET("/beta-policy", h.Admin.Setting.GetBetaPolicySettings)
 		adminSettings.PUT("/beta-policy", h.Admin.Setting.UpdateBetaPolicySettings)
-		// Sora S3 存储配置
-		adminSettings.GET("/sora-s3", h.Admin.Setting.GetSoraS3Settings)
-		adminSettings.PUT("/sora-s3", h.Admin.Setting.UpdateSoraS3Settings)
-		adminSettings.POST("/sora-s3/test", h.Admin.Setting.TestSoraS3Connection)
-		adminSettings.GET("/sora-s3/profiles", h.Admin.Setting.ListSoraS3Profiles)
-		adminSettings.POST("/sora-s3/profiles", h.Admin.Setting.CreateSoraS3Profile)
-		adminSettings.PUT("/sora-s3/profiles/:profile_id", h.Admin.Setting.UpdateSoraS3Profile)
-		adminSettings.DELETE("/sora-s3/profiles/:profile_id", h.Admin.Setting.DeleteSoraS3Profile)
-		adminSettings.POST("/sora-s3/profiles/:profile_id/activate", h.Admin.Setting.SetActiveSoraS3Profile)
+		// Web Search 模拟配置
+		adminSettings.GET("/web-search-emulation", h.Admin.Setting.GetWebSearchEmulationConfig)
+		adminSettings.PUT("/web-search-emulation", h.Admin.Setting.UpdateWebSearchEmulationConfig)
+		adminSettings.POST("/web-search-emulation/test", h.Admin.Setting.TestWebSearchEmulation)
+		adminSettings.POST("/web-search-emulation/reset-usage", h.Admin.Setting.ResetWebSearchUsage)
 	}
 }
 
@@ -577,5 +565,17 @@ func registerTLSFingerprintProfileRoutes(admin *gin.RouterGroup, h *handler.Hand
 		profiles.POST("", h.Admin.TLSFingerprintProfile.Create)
 		profiles.PUT("/:id", h.Admin.TLSFingerprintProfile.Update)
 		profiles.DELETE("/:id", h.Admin.TLSFingerprintProfile.Delete)
+	}
+}
+
+func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	channels := admin.Group("/channels")
+	{
+		channels.GET("", h.Admin.Channel.List)
+		channels.GET("/model-pricing", h.Admin.Channel.GetModelDefaultPricing)
+		channels.GET("/:id", h.Admin.Channel.GetByID)
+		channels.POST("", h.Admin.Channel.Create)
+		channels.PUT("/:id", h.Admin.Channel.Update)
+		channels.DELETE("/:id", h.Admin.Channel.Delete)
 	}
 }
