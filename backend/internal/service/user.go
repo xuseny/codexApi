@@ -22,6 +22,10 @@ type User struct {
 	Concurrency    int
 	Status         string
 	AllowedGroups  []int64
+	// Sora storage quota fields. QuotaBytes=0 means fallback to group/system quota;
+	// UsedBytes tracks persisted local/S3 media usage.
+	SoraStorageQuotaBytes int64
+	SoraStorageUsedBytes  int64
 	TokenVersion   int64 // Incremented on password change to invalidate existing tokens
 	// TokenVersionResolved indicates TokenVersion already contains the fingerprint-derived
 	// value expected in JWT claims and refresh-token state.
