@@ -86,7 +86,16 @@
                   :disabled="busy"
                   @change="handleImagesChange"
                 />
-                <p class="input-hint">支持 1 张或多张图片，后端会以 multipart 方式发送 image / image[n]。</p>
+                <div
+                  class="mt-3 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-5 text-center text-sm text-gray-500 outline-none transition focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-100 dark:border-dark-600 dark:bg-dark-800/60 dark:text-dark-300 dark:focus:border-primary-500 dark:focus:bg-dark-900"
+                  tabindex="0"
+                  role="button"
+                  aria-label="粘贴参考图片"
+                  @paste.prevent="handleImagesPaste"
+                >
+                  点击这里后按 Ctrl+V，可直接粘贴截图或复制的图片
+                </div>
+                <p class="input-hint">支持上传或粘贴 1 张或多张图片，后端会以 multipart 方式发送 image / image[n]。</p>
               </div>
 
               <div v-if="sourcePreviews.length" class="grid grid-cols-3 gap-2">
@@ -295,14 +304,41 @@ function revokePreviews(): void {
   sourcePreviews.value.forEach((preview) => URL.revokeObjectURL(preview.url))
 }
 
-function handleImagesChange(event: Event): void {
-  const input = event.target as HTMLInputElement
+function setSourceImages(files: File[], append = false): void {
+  const nextImages = append ? [...sourceImages.value, ...files] : files
   revokePreviews()
-  sourceImages.value = Array.from(input.files || [])
+  sourceImages.value = nextImages
   sourcePreviews.value = sourceImages.value.map((file) => ({
     name: `${file.name}-${file.lastModified}`,
     url: URL.createObjectURL(file)
   }))
+}
+
+function handleImagesChange(event: Event): void {
+  const input = event.target as HTMLInputElement
+  setSourceImages(Array.from(input.files || []))
+}
+
+function handleImagesPaste(event: ClipboardEvent): void {
+  const pastedImages = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item, index) => {
+      const file = item.getAsFile()
+      if (!file) {
+        return null
+      }
+      const extension = file.type.split('/')[1] || 'png'
+      return new File([file], `pasted-image-${Date.now()}-${index}.${extension}`, { type: file.type })
+    })
+    .filter((file): file is File => Boolean(file))
+
+  if (!pastedImages.length) {
+    appStore.showError('剪贴板里没有可用图片')
+    return
+  }
+
+  setSourceImages(pastedImages, true)
+  appStore.showSuccess(`已粘贴 ${pastedImages.length} 张图片`)
 }
 
 function handleMaskChange(event: Event): void {
