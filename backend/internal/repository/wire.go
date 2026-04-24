@@ -74,8 +74,6 @@ var ProviderSet = wire.NewSet(
 	NewAPIKeyExchangeRepository,
 	NewRedeemCodeRepository,
 	NewPromoCodeRepository,
-	NewSoraAccountRepository,
-	NewSoraGenerationRepository,
 	NewAnnouncementRepository,
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,

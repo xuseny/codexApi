@@ -145,7 +145,7 @@ func TestAccountTestService_OpenAI429PersistsSnapshotWithoutRateLimit(t *testing
 
 func TestAccountTestService_OpenAIOAuthAddsCodexHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := newSoraTestContext()
+	ctx, _ := newTestContext()
 
 	resp := newJSONResponse(http.StatusOK, "")
 	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}` + "\n\n"))

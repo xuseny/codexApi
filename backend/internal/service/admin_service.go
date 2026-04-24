@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -19,7 +20,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/util/soraerror"
 )
 
 // AdminService interface defines admin management operations
@@ -490,6 +490,18 @@ const (
 )
 
 var ErrRPMStatusUnavailable = infraerrors.New(http.StatusNotImplemented, "RPM_STATUS_UNAVAILABLE", "RPM cache not available")
+
+var (
+	proxyQualityCFRayPattern  = regexp.MustCompile(`(?i)cf-ray[:\s=]+([a-z0-9-]+)`)
+	proxyQualityCRayPattern   = regexp.MustCompile(`(?i)cRay:\s*'([a-z0-9-]+)'`)
+	proxyQualityCFHTMLMarkers = []string{
+		"window._cf_chl_opt",
+		"just a moment",
+		"enable javascript and cookies to continue",
+		"__cf_chl_",
+		"challenge-platform",
+	}
+)
 
 // adminServiceImpl implements AdminService
 type adminServiceImpl struct {
@@ -2853,9 +2865,9 @@ func runProxyQualityTarget(ctx context.Context, client *http.Client, target prox
 	}
 
 	// Cloudflare challenge 检测
-	if soraerror.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
+	if isProxyQualityCloudflareChallenge(resp.StatusCode, resp.Header, body) {
 		item.Status = "challenge"
-		item.CFRay = soraerror.ExtractCloudflareRayID(resp.Header, body)
+		item.CFRay = extractProxyQualityCloudflareRayID(resp.Header, body)
 		item.Message = "命中 Cloudflare challenge"
 		return item
 	}
@@ -2933,6 +2945,61 @@ func proxyQualityOverallStatus(result *ProxyQualityCheckResult) string {
 		return "healthy"
 	}
 	return "failed"
+}
+
+func isProxyQualityCloudflareChallenge(statusCode int, headers http.Header, body []byte) bool {
+	if statusCode != http.StatusForbidden && statusCode != http.StatusTooManyRequests {
+		return false
+	}
+	if headers != nil && strings.EqualFold(strings.TrimSpace(headers.Get("cf-mitigated")), "challenge") {
+		return true
+	}
+
+	preview := strings.ToLower(truncateProxyQualityBody(body, 4096))
+	for _, marker := range proxyQualityCFHTMLMarkers {
+		if strings.Contains(preview, marker) {
+			return true
+		}
+	}
+
+	contentType := ""
+	if headers != nil {
+		contentType = strings.ToLower(strings.TrimSpace(headers.Get("content-type")))
+	}
+	return strings.Contains(contentType, "text/html") &&
+		(strings.Contains(preview, "<html") || strings.Contains(preview, "<!doctype html")) &&
+		(strings.Contains(preview, "cloudflare") || strings.Contains(preview, "challenge"))
+}
+
+func extractProxyQualityCloudflareRayID(headers http.Header, body []byte) string {
+	if headers != nil {
+		if rayID := strings.TrimSpace(headers.Get("cf-ray")); rayID != "" {
+			return rayID
+		}
+		if rayID := strings.TrimSpace(headers.Get("Cf-Ray")); rayID != "" {
+			return rayID
+		}
+	}
+
+	preview := truncateProxyQualityBody(body, 8192)
+	if matches := proxyQualityCFRayPattern.FindStringSubmatch(preview); len(matches) >= 2 {
+		return strings.TrimSpace(matches[1])
+	}
+	if matches := proxyQualityCRayPattern.FindStringSubmatch(preview); len(matches) >= 2 {
+		return strings.TrimSpace(matches[1])
+	}
+	return ""
+}
+
+func truncateProxyQualityBody(body []byte, max int) string {
+	if max <= 0 {
+		max = 512
+	}
+	raw := strings.TrimSpace(string(body))
+	if len(raw) <= max {
+		return raw
+	}
+	return raw[:max]
 }
 
 func proxyQualityFirstCFRay(result *ProxyQualityCheckResult) string {

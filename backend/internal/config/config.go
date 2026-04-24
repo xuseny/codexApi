@@ -87,7 +87,6 @@ type Config struct {
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
-	Sora                    SoraConfig                    `mapstructure:"sora"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 }
@@ -170,41 +169,6 @@ type IdempotencyConfig struct {
 	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
 	// CleanupBatchSize 每次清理的最大记录数。
 	CleanupBatchSize int `mapstructure:"cleanup_batch_size"`
-}
-
-type SoraConfig struct {
-	Client  SoraClientConfig  `mapstructure:"client"`
-	Storage SoraStorageConfig `mapstructure:"storage"`
-}
-
-type SoraClientConfig struct {
-	BaseURL                  string `mapstructure:"base_url"`
-	PollIntervalSeconds      int    `mapstructure:"poll_interval_seconds"`
-	MaxPollAttempts          int    `mapstructure:"max_poll_attempts"`
-	Debug                    bool   `mapstructure:"debug"`
-	UseOpenAITokenProvider   bool   `mapstructure:"use_openai_token_provider"`
-	DisableTLSFingerprint    bool   `mapstructure:"disable_tls_fingerprint"`
-}
-
-type SoraStorageConfig struct {
-	Type                   string                   `mapstructure:"type"`
-	LocalPath              string                   `mapstructure:"local_path"`
-	MaxConcurrentDownloads int                      `mapstructure:"max_concurrent_downloads"`
-	DownloadTimeoutSeconds int                      `mapstructure:"download_timeout_seconds"`
-	MaxDownloadBytes       int64                    `mapstructure:"max_download_bytes"`
-	FallbackToUpstream     bool                     `mapstructure:"fallback_to_upstream"`
-	Debug                  bool                     `mapstructure:"debug"`
-	Cleanup                SoraStorageCleanupConfig `mapstructure:"cleanup"`
-}
-
-type SoraStorageCleanupConfig struct {
-	Enabled       bool   `mapstructure:"enabled"`
-	RetentionDays int    `mapstructure:"retention_days"`
-	Schedule      string `mapstructure:"schedule"`
-}
-
-type SoraModelFilterConfig struct {
-	HidePromptEnhance bool `mapstructure:"hide_prompt_enhance"`
 }
 
 type LinuxDoConnectConfig struct {
@@ -618,22 +582,12 @@ type GatewayConfig struct {
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
-	// SoraMaxBodySize controls the request body limit for /sora routes.
-	SoraMaxBodySize int64 `mapstructure:"sora_max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
 	UpstreamResponseReadMaxBytes int64 `mapstructure:"upstream_response_read_max_bytes"`
 	// 代理探测响应体读取上限（字节）
 	ProxyProbeResponseReadMaxBytes int64 `mapstructure:"proxy_probe_response_read_max_bytes"`
 	// Gemini 上游响应头调试日志开关（默认关闭，避免高频日志开销）
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
-	// Sora request and media handling options.
-	SoraRequestTimeoutSeconds       int                   `mapstructure:"sora_request_timeout_seconds"`
-	SoraStreamTimeoutSeconds        int                   `mapstructure:"sora_stream_timeout_seconds"`
-	SoraStreamMode                  string                `mapstructure:"sora_stream_mode"`
-	SoraModelFilters                SoraModelFilterConfig `mapstructure:"sora_model_filters"`
-	SoraMediaRequireAPIKey          bool                  `mapstructure:"sora_media_require_api_key"`
-	SoraMediaSigningKey             string                `mapstructure:"sora_media_signing_key"`
-	SoraMediaSignedURLTTLSeconds    int                   `mapstructure:"sora_media_signed_url_ttl_seconds"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
 	// ForceCodexCLI: 强制将 OpenAI `/v1/responses` 请求按 Codex CLI 处理。
@@ -1721,14 +1675,6 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
-	viper.SetDefault("gateway.sora_max_body_size", int64(256*1024*1024))
-	viper.SetDefault("gateway.sora_stream_timeout_seconds", 900)
-	viper.SetDefault("gateway.sora_request_timeout_seconds", 180)
-	viper.SetDefault("gateway.sora_stream_mode", "force")
-	viper.SetDefault("gateway.sora_model_filters.hide_prompt_enhance", true)
-	viper.SetDefault("gateway.sora_media_require_api_key", true)
-	viper.SetDefault("gateway.sora_media_signing_key", "")
-	viper.SetDefault("gateway.sora_media_signed_url_ttl_seconds", 900)
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
 	viper.SetDefault("gateway.gemini_debug_response_headers", false)
@@ -1804,22 +1750,6 @@ func setDefaults() {
 	viper.SetDefault("gemini.oauth.client_secret", "")
 	viper.SetDefault("gemini.oauth.scopes", "")
 	viper.SetDefault("gemini.quota.policy", "")
-	viper.SetDefault("sora.client.base_url", "")
-	viper.SetDefault("sora.client.poll_interval_seconds", 2)
-	viper.SetDefault("sora.client.max_poll_attempts", 600)
-	viper.SetDefault("sora.client.debug", false)
-	viper.SetDefault("sora.client.use_openai_token_provider", false)
-	viper.SetDefault("sora.client.disable_tls_fingerprint", false)
-	viper.SetDefault("sora.storage.type", "")
-	viper.SetDefault("sora.storage.local_path", "/app/data/sora")
-	viper.SetDefault("sora.storage.max_concurrent_downloads", 4)
-	viper.SetDefault("sora.storage.download_timeout_seconds", 120)
-	viper.SetDefault("sora.storage.max_download_bytes", int64(200<<20))
-	viper.SetDefault("sora.storage.fallback_to_upstream", false)
-	viper.SetDefault("sora.storage.debug", false)
-	viper.SetDefault("sora.storage.cleanup.enabled", false)
-	viper.SetDefault("sora.storage.cleanup.retention_days", 7)
-	viper.SetDefault("sora.storage.cleanup.schedule", "0 3 * * *")
 
 	// Subscription Maintenance (bounded queue + worker pool)
 	viper.SetDefault("subscription_maintenance.worker_count", 2)

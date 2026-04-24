@@ -167,15 +167,11 @@ chown -R caddy:caddy /var/lib/caddy
 - 跨节点行为异常
 - TOTP/2FA 无法互通
 
-### 2.3 Sora 本地文件和 datamanagementd 元数据也属于“要迁移的数据”
 
 不要只迁移数据库。
 
 如果你使用了以下能力，也要一起迁移：
 
-- Sora 本地媒体目录
-  - `sora.storage.local_path` 配置值
-  - 若为空，默认是 `/app/data/sora`
 - `datamanagementd` SQLite 元数据
   - 默认：`/var/lib/sub2api/datamanagement/datamanagementd.db`
 
@@ -194,7 +190,6 @@ chown -R caddy:caddy /var/lib/caddy
 - `PG_DB`：PostgreSQL 数据库名
 - `PG_USER`：PostgreSQL 用户名
 - `REDIS_PASSWORD`：Redis 当前线上密码
-- `SORA_LOCAL_PATH`：Sora 本地媒体目录
 
 强烈建议优先使用真实内网 IP，不要用公网/NAT 映射地址作为节点间通信地址。
 
@@ -232,7 +227,6 @@ ls -lh /var/lib/sub2api/datamanagement/
 - `sub2api.service`
 - `override.conf` 中的环境变量
 - `config.yaml`
-- Sora 本地目录
 - `datamanagementd` SQLite 路径
 
 ### 4.2 提前处理 DNS TTL
@@ -409,18 +403,14 @@ scp /var/lib/redis/dump.rdb root@C_NEW_IP:/var/lib/redis/
 
 如果你能接受 Redis 运行态数据在切换时丢失，也可以只保留同一个 `redis.password`，在最终切换时不迁移 Redis 文件。
 
-### 6.3 Sora 本地文件预同步
 
-如果 `sora.storage.local_path` 为空，默认目录是：
 
 ```text
-/app/data/sora
 ```
 
 先在 A 上查清真实目录，再同步：
 
 ```bash
-rsync -aHAX --info=progress2 SORA_LOCAL_PATH/ root@C_NEW_IP:SORA_LOCAL_PATH/
 ```
 
 ### 6.4 datamanagementd 元数据预同步
@@ -491,7 +481,6 @@ rsync -aHAX /var/lib/redis/ root@C_NEW_IP:/var/lib/redis/
 然后同步本地文件：
 
 ```bash
-rsync -aHAX --delete SORA_LOCAL_PATH/ root@C_NEW_IP:SORA_LOCAL_PATH/
 rsync -aHAX --delete /var/lib/sub2api/datamanagement/ root@C_NEW_IP:/var/lib/sub2api/datamanagement/
 ```
 
@@ -632,8 +621,6 @@ DOMAIN {
 迁移后，如果 B 继续保留为应用节点，C 上的 Caddy 仍建议沿用扩容手册思路：
 
 - 普通请求：`C 本机 + B` 轮询
-- `/sora/media/*`：固定到 C 本机
-- `/sora/media-signed/*`：固定到 C 本机
 - `/api/v1/admin/data-management/*`：固定到 C 本机
 
 示例：
@@ -642,16 +629,12 @@ DOMAIN {
 # 将 example.com / www.example.com / api.example.com
 # 替换成你的真实域名
 example.com, www.example.com, api.example.com {
-    @local_sora_media {
-        path /sora/media/*
-        path /sora/media-signed/*
     }
 
     @data_management {
         path /api/v1/admin/data-management/*
     }
 
-    handle @local_sora_media {
         reverse_proxy 127.0.0.1:2127
     }
 
@@ -729,7 +712,6 @@ redis-cli -a 'REDIS_PASSWORD' CLIENT LIST
 - 登录态正常
 - `/api/v1/settings/public` 正常
 - `/v1/responses` 正常
-- Sora 媒体可访问
 - 数据管理功能正常（如启用）
 
 ## 11. 回滚方案
@@ -770,7 +752,6 @@ redis-cli -a 'REDIS_PASSWORD' CLIENT LIST
 
 - PostgreSQL 数据目录
 - Redis 数据目录
-- Sora 本地文件
 - `datamanagementd` SQLite
 - `/opt/sub2api`
 - `/etc/caddy/Caddyfile`

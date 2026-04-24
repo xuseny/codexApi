@@ -718,7 +718,7 @@ func enrichOpenAICredentialsFromJWT(item *DataAccount) {
 	}
 
 	platform := strings.ToLower(strings.TrimSpace(item.Platform))
-	if platform != service.PlatformOpenAI && platform != service.PlatformSora {
+	if platform != service.PlatformOpenAI {
 		return
 	}
 

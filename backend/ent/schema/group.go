@@ -150,9 +150,6 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
-		field.Int64("sora_storage_quota_bytes").
-			Default(0).
-			Comment("Sora storage quota in bytes; 0 means no group quota"),
 	}
 }
 

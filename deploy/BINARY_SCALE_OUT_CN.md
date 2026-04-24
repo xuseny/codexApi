@@ -114,11 +114,8 @@
 - 仍然只在 A 上跑 `datamanagementd`
 - `/api/v1/admin/data-management/*` 相关请求固定回 A
 
-### 3. Sora 本地媒体默认不适合多机
 
-如果你仍然使用本地存储，Sora 媒体默认落在：
 
-- `/app/data/sora`
 
 或二进制部署对应的本地目录。
 
@@ -130,8 +127,6 @@
 
 所以二选一：
 
-1. 更推荐：把 Sora 媒体切到 S3 / 对象存储
-2. 过渡方案：把 `/sora/media/*` 和 `/sora/media-signed/*` 固定回 A
 
 本文档默认采用第 2 种过渡方案。
 
@@ -356,8 +351,6 @@ sudo journalctl -u sub2api -n 80 --no-pager
 核心逻辑是：
 
 - 普通请求：在 A 和 B 之间轮询
-- `/sora/media/*`：固定回 A
-- `/sora/media-signed/*`：固定回 A
 - `/api/v1/admin/data-management/*`：固定回 A
 
 这样能避免本地媒体和 `datamanagementd` 跨机不一致的问题。
@@ -377,8 +370,6 @@ xuseny.online
   ↓
 旧服务器 A / Caddy
   ├─ 普通 API / 页面请求 -> A:2127 + B:2127
-  ├─ /sora/media/* -> A:2127
-  ├─ /sora/media-signed/* -> A:2127
   └─ /api/v1/admin/data-management/* -> A:2127
 
 旧服务器 A
@@ -459,7 +450,6 @@ sudo systemctl stop sub2api
 - 当节点继续增加时，应优先考虑：
   - 降低每节点数据库连接池
   - 给 PostgreSQL 增加连接池中间层，例如 `pgbouncer`
-  - 把 Sora 本地存储迁移到 S3 / R2 / MinIO
 
 ## 13. 一句话建议
 
@@ -469,6 +459,5 @@ sudo systemctl stop sub2api
 - B 只跑第二个应用节点
 - 1 个域名不变
 - 通过 Caddy 做双节点负载均衡
-- 先把 Sora 媒体和数据管理固定回 A
 
 这样是改动最小、上线最快、出问题也最好回滚的方案。
