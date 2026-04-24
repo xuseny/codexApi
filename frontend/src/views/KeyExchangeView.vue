@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="min-h-screen bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-white">
     <header class="relative z-20 px-4 py-4 sm:px-6">
       <nav class="mx-auto flex max-w-5xl items-center justify-between">
@@ -37,16 +37,18 @@
             @click="openAfterSalesGroup"
           >
             <Icon name="users" size="sm" class="mr-2" />
-            加入售后群
-          </button>
+            鍔犲叆鍞悗缇?          </button>
           <button
             type="button"
             class="btn btn-primary w-full sm:w-auto"
             @click="openRedeemCodePurchase"
           >
             <Icon name="externalLink" size="sm" class="mr-2" />
-            购买兑换码
-          </button>
+            璐拱鍏戞崲鐮?          </button>
+          <router-link to="/images" class="btn btn-secondary w-full sm:w-auto">
+            <Icon name="sparkles" size="sm" class="mr-2" />
+            image-2模型生图
+          </router-link>
         </div>
       </section>
 
@@ -97,7 +99,7 @@
                 {{ result.action === 'activated' ? t('keyExchange.actionActivated') : t('keyExchange.actionQueried') }}
               </p>
               <p class="text-xs text-emerald-700/80 dark:text-emerald-300/80">
-                {{ result.group?.name || '-' }} · {{ result.activated_at ? formatDateTime(result.activated_at) : '-' }}
+                {{ result.group?.name || '-' }} 路 {{ result.activated_at ? formatDateTime(result.activated_at) : '-' }}
               </p>
             </div>
           </div>

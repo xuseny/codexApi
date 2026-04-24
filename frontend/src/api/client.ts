@@ -22,7 +22,8 @@ const PUBLIC_APP_PATHS = [
   '/forgot-password',
   '/reset-password',
   '/key-usage',
-  '/key-exchange'
+  '/key-exchange',
+  '/images'
 ]
 
 export const apiClient: AxiosInstance = axios.create({

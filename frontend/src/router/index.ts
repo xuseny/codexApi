@@ -200,7 +200,7 @@ const routes: RouteRecordRaw[] = [
     name: 'ImageGeneration',
     component: () => import('@/views/user/ImageGenerationView.vue'),
     meta: {
-      requiresAuth: true,
+      requiresAuth: false,
       requiresAdmin: false,
       title: 'AI 图片生成',
       description: '使用 GPT Image 模型生成图片'
