@@ -2853,9 +2853,9 @@ func runProxyQualityTarget(ctx context.Context, client *http.Client, target prox
 	}
 
 	// Cloudflare challenge 检测
-	if httputil.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
+	if soraerror.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
 		item.Status = "challenge"
-		item.CFRay = httputil.ExtractCloudflareRayID(resp.Header, body)
+		item.CFRay = soraerror.ExtractCloudflareRayID(resp.Header, body)
 		item.Message = "命中 Cloudflare challenge"
 		return item
 	}

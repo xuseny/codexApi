@@ -110,6 +110,7 @@ type SettingService struct {
 	proxyRepo               ProxyRepository // for resolving websearch provider proxy URLs
 	cfg                     *config.Config
 	onUpdate                func() // Callback when settings are updated (for cache invalidation)
+	onS3Update              func() // Callback when Sora S3 settings are updated
 	version                 string // Application version
 	webSearchManagerBuilder WebSearchManagerBuilder
 }
@@ -374,6 +375,11 @@ func (s *SettingService) SetDefaultSubscriptionGroupReader(reader DefaultSubscri
 	s.defaultSubGroupReader = reader
 }
 
+// SetOnS3UpdateCallback sets callback when Sora S3 settings are updated.
+func (s *SettingService) SetOnS3UpdateCallback(callback func()) {
+	s.onS3Update = callback
+}
+
 // SetProxyRepository injects a proxy repo for resolving websearch provider proxy URLs.
 func (s *SettingService) SetProxyRepository(repo ProxyRepository) {
 	s.proxyRepo = repo
@@ -425,6 +431,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyTablePageSizeOptions,
 		SettingKeyCustomMenuItems,
 		SettingKeyCustomEndpoints,
+		SettingKeySoraClientEnabled,
 		SettingKeyLinuxDoConnectEnabled,
 		SettingKeyWeChatConnectEnabled,
 		SettingKeyWeChatConnectAppID,
@@ -528,6 +535,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		PaymentEnabled:                   settings[SettingPaymentEnabled] == "true",
 		OIDCOAuthEnabled:                 oidcEnabled,
 		OIDCOAuthProviderName:            oidcProviderName,
+		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
 		BalanceLowNotifyEnabled:          settings[SettingKeyBalanceLowNotifyEnabled] == "true",
 		AccountQuotaNotifyEnabled:        settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
 		BalanceLowNotifyThreshold:        balanceLowNotifyThreshold,
@@ -588,6 +596,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		PaymentEnabled                   bool            `json:"payment_enabled"`
 		OIDCOAuthEnabled                 bool            `json:"oidc_oauth_enabled"`
 		OIDCOAuthProviderName            string          `json:"oidc_oauth_provider_name"`
+		SoraClientEnabled                bool            `json:"sora_client_enabled"`
 		Version                          string          `json:"version,omitempty"`
 		BalanceLowNotifyEnabled          bool            `json:"balance_low_notify_enabled"`
 		AccountQuotaNotifyEnabled        bool            `json:"account_quota_notify_enabled"`
@@ -626,6 +635,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		PaymentEnabled:                   settings.PaymentEnabled,
 		OIDCOAuthEnabled:                 settings.OIDCOAuthEnabled,
 		OIDCOAuthProviderName:            settings.OIDCOAuthProviderName,
+		SoraClientEnabled:                settings.SoraClientEnabled,
 		Version:                          s.version,
 		BalanceLowNotifyEnabled:          settings.BalanceLowNotifyEnabled,
 		AccountQuotaNotifyEnabled:        settings.AccountQuotaNotifyEnabled,
@@ -1563,6 +1573,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyTablePageSizeOptions:                     "[10,20,50,100]",
 		SettingKeyCustomMenuItems:                          "[]",
 		SettingKeyCustomEndpoints:                          "[]",
+		SettingKeySoraClientEnabled:                        "false",
 		SettingKeyWeChatConnectEnabled:                     "false",
 		SettingKeyWeChatConnectAppID:                       "",
 		SettingKeyWeChatConnectAppSecret:                   "",
@@ -1693,6 +1704,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
 		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
+		SoraClientEnabled:                settings[SettingKeySoraClientEnabled] == "true",
 		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
