@@ -81,7 +81,27 @@
               </div>
 
               <div>
-                <label for="mask-upload" class="input-label">可选 mask 图片</label>
+                <div class="flex items-center gap-2">
+                  <label for="mask-upload" class="input-label mb-0">可选 mask 图片</label>
+                  <div class="group relative inline-flex">
+                    <button
+                      type="button"
+                      class="flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-xs font-bold text-gray-500 transition-colors hover:border-primary-400 hover:text-primary-600 dark:border-dark-600 dark:text-dark-400"
+                      aria-label="查看 mask 图片说明"
+                    >
+                      ?
+                    </button>
+                    <div
+                      class="pointer-events-none absolute left-1/2 top-7 z-20 w-80 -translate-x-1/2 rounded-2xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-600 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200"
+                    >
+                      <p class="font-semibold text-gray-800 dark:text-dark-100">mask 图片说明</p>
+                      <p class="mt-2">mask 是遮罩图，用来告诉模型哪里可以改、哪里不要动。</p>
+                      <p class="mt-1">白色或透明区域通常表示允许修改；黑色或不透明区域通常表示保留原图，具体以模型实现为准。</p>
+                      <p class="mt-1">适合只换背景、只换衣服、去掉某个物体、保留人脸或 Logo 等局部重绘场景。</p>
+                      <p class="mt-1">不上传 mask 时，模型会根据参考图和提示词整体生成，改动可能更大。</p>
+                    </div>
+                  </div>
+                </div>
                 <input
                   id="mask-upload"
                   type="file"
