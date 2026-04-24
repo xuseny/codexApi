@@ -143,6 +143,16 @@ const routes: RouteRecordRaw[] = [
       title: 'Key Usage',
     }
   },
+  {
+    path: '/key-exchange',
+    name: 'KeyExchange',
+    component: () => import('@/views/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'API Key Exchange',
+      titleKey: 'keyExchange.title'
+    }
+  },
 
   // ==================== User Routes ====================
   {
@@ -428,6 +438,18 @@ const routes: RouteRecordRaw[] = [
       title: 'Redeem Code Management',
       titleKey: 'admin.redeem.title',
       descriptionKey: 'admin.redeem.description'
+    }
+  },
+  {
+    path: '/admin/key-exchange',
+    name: 'AdminKeyExchange',
+    component: () => import('@/views/admin/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'API Key Exchange Codes',
+      titleKey: 'admin.keyExchange.title',
+      descriptionKey: 'admin.keyExchange.description'
     }
   },
   {

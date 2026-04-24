@@ -44,6 +44,25 @@ vi.mock('@/composables/useRoutePrefetch', () => ({
 }))
 
 describe('router WeChat OAuth route', () => {
+  it('registers the API key exchange route as a public route', async () => {
+    const { default: router } = await import('@/router')
+    const route = router.getRoutes().find((record) => record.name === 'KeyExchange')
+
+    expect(route?.path).toBe('/key-exchange')
+    expect(route?.meta.requiresAuth).toBe(false)
+    expect(route?.meta.title).toBe('API Key Exchange')
+  })
+
+  it('registers the admin API key exchange route as an admin route', async () => {
+    const { default: router } = await import('@/router')
+    const route = router.getRoutes().find((record) => record.name === 'AdminKeyExchange')
+
+    expect(route?.path).toBe('/admin/key-exchange')
+    expect(route?.meta.requiresAuth).toBe(true)
+    expect(route?.meta.requiresAdmin).toBe(true)
+    expect(route?.meta.title).toBe('API Key Exchange Codes')
+  })
+
   it('registers the WeChat callback route as a public route', async () => {
     const { default: router } = await import('@/router')
     const route = router.getRoutes().find((record) => record.name === 'WeChatOAuthCallback')
