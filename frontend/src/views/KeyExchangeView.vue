@@ -37,14 +37,16 @@
             @click="openAfterSalesGroup"
           >
             <Icon name="users" size="sm" class="mr-2" />
-            鍔犲叆鍞悗缇?          </button>
+            加入售后群
+          </button>
           <button
             type="button"
             class="btn btn-primary w-full sm:w-auto"
             @click="openRedeemCodePurchase"
           >
             <Icon name="externalLink" size="sm" class="mr-2" />
-            璐拱鍏戞崲鐮?          </button>
+            购买兑换码
+          </button>
           <router-link to="/images" class="btn btn-secondary w-full sm:w-auto">
             <Icon name="sparkles" size="sm" class="mr-2" />
             image-2模型生图

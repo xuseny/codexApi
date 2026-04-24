@@ -1,6 +1,21 @@
-<template>
-  <AppLayout>
-    <div class="mx-auto max-w-6xl space-y-6">
+﻿<template>
+  <div class="min-h-screen bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-white">
+    <header class="relative z-20 px-4 py-4 sm:px-6">
+      <nav class="mx-auto flex max-w-6xl items-center justify-between">
+        <router-link to="/key-exchange" class="flex items-center gap-3">
+          <div class="h-10 w-10 overflow-hidden rounded-xl shadow-md">
+            <img :src="siteLogo || '/logo.png'" alt="Logo" class="h-full w-full object-contain" />
+          </div>
+          <span class="text-lg font-semibold tracking-tight">{{ siteName }}</span>
+        </router-link>
+        <div class="flex items-center gap-2">
+          <LocaleSwitcher />
+          <router-link to="/key-exchange" class="btn btn-secondary">Key 兑换</router-link>
+        </div>
+      </nav>
+    </header>
+
+    <main class="mx-auto w-full max-w-6xl space-y-6 px-4 pb-12 pt-8 sm:px-6">
       <div class="rounded-3xl bg-gradient-to-br from-primary-500 to-fuchsia-600 px-6 py-8 text-white shadow-glow">
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -225,13 +240,13 @@
           </div>
         </div>
       </div>
-    </div>
-  </AppLayout>
+    </main>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
-import AppLayout from '@/components/layout/AppLayout.vue'
+import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { imagesAPI, type ImageModel, type ImageQuality, type ImageSize } from '@/api/images'
 import { useAppStore } from '@/stores/app'
@@ -248,6 +263,8 @@ const sizeOptions: ImageSize[] = ['auto', '1024x1024', '1024x1536', '1536x1024']
 const qualityOptions: ImageQuality[] = ['auto', 'low', 'medium', 'high']
 
 const appStore = useAppStore()
+const siteName = computed(() => appStore.siteName || 'Sub2API')
+const siteLogo = computed(() => appStore.siteLogo)
 const mode = ref<GenerationMode>('generate')
 const submitting = ref(false)
 const optimizing = ref(false)
