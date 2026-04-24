@@ -1,8 +1,10 @@
 import axios from 'axios'
 
+const IMAGE_GENERATION_TIMEOUT_MS = 5 * 60 * 1000
+
 const imageGatewayClient = axios.create({
   baseURL: '',
-  timeout: 300000,
+  timeout: IMAGE_GENERATION_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -35,6 +37,7 @@ export const imagesAPI = {
   async generate(payload: GenerateImageRequest): Promise<ImagesGenerationResponse> {
     const { apiKey, ...body } = payload
     const response = await imageGatewayClient.post<ImagesGenerationResponse>('/v1/images/generations', body, {
+      timeout: IMAGE_GENERATION_TIMEOUT_MS,
       headers: {
         Authorization: `Bearer ${apiKey}`
       }

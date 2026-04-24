@@ -202,9 +202,8 @@ const routes: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Image Generation',
-      titleKey: 'imageGeneration.title',
-      descriptionKey: 'imageGeneration.description'
+      title: 'AI 图片生成',
+      description: '使用 GPT Image 模型生成图片'
     }
   },
   {

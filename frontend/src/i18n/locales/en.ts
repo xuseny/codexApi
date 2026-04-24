@@ -418,6 +418,7 @@ export default {
     announcements: 'Announcements',
     apiKeys: 'API Keys',
     usage: 'Usage',
+    imageGeneration: 'AI Image Generation',
     redeem: 'Redeem',
     keyExchange: 'Key Exchange',
     profile: 'Profile',
@@ -447,6 +448,11 @@ export default {
     paymentDashboard: 'Payment Dashboard',
     paymentConfig: 'Payment Config',
     paymentPlans: 'Plans'
+  },
+
+  imageGeneration: {
+    title: 'AI Image Generation',
+    description: 'Generate images with GPT Image models'
   },
 
   // Auth
