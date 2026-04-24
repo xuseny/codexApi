@@ -14,7 +14,7 @@ func setupRedeemExportRouter() (*gin.Engine, *stubAdminService) {
 	router := gin.New()
 	adminSvc := newStubAdminService()
 
-	h := NewRedeemHandler(adminSvc, nil)
+	h := NewRedeemHandler(adminSvc, nil, nil)
 	router.GET("/api/v1/admin/redeem-codes/export", h.Export)
 	return router, adminSvc
 }
