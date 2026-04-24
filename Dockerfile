@@ -10,7 +10,7 @@ ARG NODE_IMAGE=node:24-alpine
 ARG GOLANG_IMAGE=golang:1.26.2-alpine
 ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
-ARG GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://goproxy.cn|https://proxy.golang.org|direct
 ARG GOSUMDB=sum.golang.google.cn
 
 # -----------------------------------------------------------------------------
