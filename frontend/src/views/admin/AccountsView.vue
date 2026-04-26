@@ -430,6 +430,10 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'last_used_at',
   'expires_at'
 ])
+const ACCOUNT_SORT_REQUEST_KEYS: Record<string, string> = {
+  status: 'status_recovery_at'
+}
+const resolveAccountSortRequestKey = (key: string) => ACCOUNT_SORT_REQUEST_KEYS[key] ?? key
 const loadInitialAccountSortState = (): AccountSortState => {
   const fallback: AccountSortState = { sort_by: 'name', sort_order: 'asc' }
   try {
@@ -439,7 +443,7 @@ const loadInitialAccountSortState = (): AccountSortState => {
     const key = typeof parsed.key === 'string' ? parsed.key : ''
     if (!ACCOUNT_SORTABLE_KEYS.has(key)) return fallback
     return {
-      sort_by: key,
+      sort_by: resolveAccountSortRequestKey(key),
       sort_order: parsed.order === 'desc' ? 'desc' : 'asc'
     }
   } catch {
@@ -735,10 +739,11 @@ const handlePageSizeChange = (size: number) => {
 }
 
 const handleSort = (key: string, order: AccountSortOrder) => {
-  sortState.sort_by = key
+  const sortBy = resolveAccountSortRequestKey(key)
+  sortState.sort_by = sortBy
   sortState.sort_order = order
   const requestParams = params as any
-  requestParams.sort_by = key
+  requestParams.sort_by = sortBy
   requestParams.sort_order = order
   pagination.page = 1
   hasPendingListSync.value = false

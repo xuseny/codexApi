@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -581,6 +582,11 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
 
+	switch sortBy {
+	case "status_recovery_at", "recovery_at":
+		return accountRecoveryAtOrder(sortOrder)
+	}
+
 	field := dbaccount.FieldName
 	defaultOrder := true
 	switch sortBy {
@@ -619,6 +625,36 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		return []func(*entsql.Selector){dbent.Asc(dbaccount.FieldName), dbent.Asc(dbaccount.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
+}
+
+func accountRecoveryAtOrder(sortOrder string) []func(*entsql.Selector) {
+	direction := "ASC"
+	tieOrder := entsql.Asc
+	if sortOrder == pagination.SortOrderDesc {
+		direction = "DESC"
+		tieOrder = entsql.Desc
+	}
+
+	return []func(*entsql.Selector){
+		func(s *entsql.Selector) {
+			s.OrderExpr(entsql.Expr(accountRecoveryAtExpr(s) + " " + direction + " NULLS LAST"))
+			s.OrderBy(tieOrder(s.C(dbaccount.FieldID)))
+		},
+	}
+}
+
+func accountRecoveryAtExpr(s *entsql.Selector) string {
+	futureOrNull := func(field string) string {
+		col := s.C(field)
+		return fmt.Sprintf("CASE WHEN %s > NOW() THEN %s END", col, col)
+	}
+
+	return fmt.Sprintf(
+		"NULLIF(LEAST(COALESCE(%[1]s, 'infinity'::timestamptz), COALESCE(%[2]s, 'infinity'::timestamptz), COALESCE(%[3]s, 'infinity'::timestamptz)), 'infinity'::timestamptz)",
+		futureOrNull(dbaccount.FieldRateLimitResetAt),
+		futureOrNull(dbaccount.FieldOverloadUntil),
+		futureOrNull(dbaccount.FieldTempUnschedulableUntil),
+	)
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
