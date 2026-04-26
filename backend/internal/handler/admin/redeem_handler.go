@@ -165,8 +165,8 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 			response.BadRequest(c, "group_id is required for subscription type")
 			return
 		}
-		if req.ValidityDays <= 0 {
-			response.BadRequest(c, "validity_days must be greater than 0 for subscription type")
+		if req.ValidityDays == 0 {
+			response.BadRequest(c, "validity_days must be non-zero for subscription type")
 			return
 		}
 	}
