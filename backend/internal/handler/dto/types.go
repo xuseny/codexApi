@@ -46,20 +46,21 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID               int64      `json:"id"`
+	UserID           int64      `json:"user_id"`
+	Key              string     `json:"key"`
+	Name             string     `json:"name"`
+	GroupID          *int64     `json:"group_id"`
+	Status           string     `json:"status"`
+	IPWhitelist      []string   `json:"ip_whitelist"`
+	IPBlacklist      []string   `json:"ip_blacklist"`
+	ConcurrencyLimit int        `json:"concurrency_limit"`
+	LastUsedAt       *time.Time `json:"last_used_at"`
+	Quota            float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed        float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt        *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 
 	// Rate limit fields
 	RateLimit5h   float64    `json:"rate_limit_5h"`
@@ -121,21 +122,21 @@ type APIKeyExchangeResolveResponse struct {
 }
 
 type APIKeyExchangeQuotaRedeemResponse struct {
-	Amount     float64                      `json:"amount"`
-	RedeemCode string                       `json:"redeem_code"`
+	Amount     float64                        `json:"amount"`
+	RedeemCode string                         `json:"redeem_code"`
 	Result     *APIKeyExchangeResolveResponse `json:"result,omitempty"`
 }
 
 type APIKeyExchangeUsageLog struct {
-	Model       string    `json:"model"`
-	Endpoint    string    `json:"endpoint"`
-	GroupName   string    `json:"group_name"`
-	RequestType string    `json:"request_type"`
-	Tokens      int       `json:"tokens"`
-	FirstTokenMs *int     `json:"first_token_ms"`
-	ActualCost  float64   `json:"actual_cost"`
-	DurationMs  int       `json:"duration_ms"`
-	CreatedAt   time.Time `json:"created_at"`
+	Model        string    `json:"model"`
+	Endpoint     string    `json:"endpoint"`
+	GroupName    string    `json:"group_name"`
+	RequestType  string    `json:"request_type"`
+	Tokens       int       `json:"tokens"`
+	FirstTokenMs *int      `json:"first_token_ms"`
+	ActualCost   float64   `json:"actual_cost"`
+	DurationMs   int       `json:"duration_ms"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Group struct {

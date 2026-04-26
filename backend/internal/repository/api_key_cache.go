@@ -17,6 +17,7 @@ const (
 	apiKeyRateLimitDuration    = 24 * time.Hour
 	apiKeyAuthCachePrefix      = "apikey:auth:"
 	apiKeyDeviceLockKeyPrefix  = "apikey:device_lock:"
+	apiKeyConcurrencyKeyPrefix = "apikey:concurrency:"
 	authCacheInvalidateChannel = "auth:cache:invalidate"
 )
 
@@ -31,6 +32,10 @@ func apiKeyAuthCacheKey(key string) string {
 
 func apiKeyDeviceLockKey(keyID int64) string {
 	return fmt.Sprintf("%s%d", apiKeyDeviceLockKeyPrefix, keyID)
+}
+
+func apiKeyConcurrencyKey(keyID int64) string {
+	return fmt.Sprintf("%s%d", apiKeyConcurrencyKeyPrefix, keyID)
 }
 
 var acquireAPIKeyDeviceLockScript = redis.NewScript(`
@@ -122,6 +127,34 @@ func (c *apiKeyCache) SetAuthCache(ctx context.Context, key string, entry *servi
 
 func (c *apiKeyCache) DeleteAuthCache(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, apiKeyAuthCacheKey(key)).Err()
+}
+
+func (c *apiKeyCache) AcquireAPIKeySlot(ctx context.Context, keyID int64, maxConcurrency int, requestID string, ttl time.Duration) (bool, error) {
+	if keyID <= 0 || maxConcurrency <= 0 {
+		return true, nil
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	result, err := acquireScript.Run(ctx, c.rdb, []string{apiKeyConcurrencyKey(keyID)}, maxConcurrency, int(ttl.Seconds()), requestID).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (c *apiKeyCache) ReleaseAPIKeySlot(ctx context.Context, keyID int64, requestID string) error {
+	if keyID <= 0 || requestID == "" {
+		return nil
+	}
+	return c.rdb.ZRem(ctx, apiKeyConcurrencyKey(keyID), requestID).Err()
+}
+
+func (c *apiKeyCache) DeleteAPIKeySlots(ctx context.Context, keyID int64) error {
+	if keyID <= 0 {
+		return nil
+	}
+	return c.rdb.Del(ctx, apiKeyConcurrencyKey(keyID)).Err()
 }
 
 // PublishAuthCacheInvalidation publishes a cache invalidation message to all instances

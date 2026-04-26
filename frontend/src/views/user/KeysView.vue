@@ -509,6 +509,19 @@
           />
         </div>
 
+        <div>
+          <label class="input-label">{{ t('keys.concurrencyLimit') }}</label>
+          <input
+            v-model.number="formData.concurrency_limit"
+            type="number"
+            min="0"
+            step="1"
+            class="input"
+            :placeholder="'5'"
+          />
+          <p class="input-hint">{{ t('keys.concurrencyLimitHint') }}</p>
+        </div>
+
         <!-- IP Restriction Section -->
         <div class="space-y-3">
           <div class="flex items-center justify-between">
@@ -1230,6 +1243,7 @@ const formData = ref({
   enable_ip_restriction: false,
   ip_whitelist: '',
   ip_blacklist: '',
+  concurrency_limit: 5 as number | null,
   // Quota settings (empty = unlimited)
   enable_quota: false,
   quota: null as number | null,
@@ -1462,6 +1476,7 @@ const editKey = (key: ApiKey) => {
     enable_ip_restriction: hasIPRestriction,
     ip_whitelist: (key.ip_whitelist || []).join('\n'),
     ip_blacklist: (key.ip_blacklist || []).join('\n'),
+    concurrency_limit: key.concurrency_limit ?? 5,
     enable_quota: key.quota > 0,
     quota: key.quota > 0 ? key.quota : null,
     enable_rate_limit: (key.rate_limit_5h > 0) || (key.rate_limit_1d > 0) || (key.rate_limit_7d > 0),
@@ -1574,6 +1589,10 @@ const handleSubmit = async () => {
 
   // Calculate quota value (null/empty/0 = unlimited, stored as 0)
   const quota = formData.value.quota && formData.value.quota > 0 ? formData.value.quota : 0
+  const concurrencyLimit =
+    formData.value.concurrency_limit !== null && formData.value.concurrency_limit >= 0
+      ? Math.floor(formData.value.concurrency_limit)
+      : 5
 
   // Calculate expiration
   let expiresInDays: number | undefined
@@ -1610,6 +1629,7 @@ const handleSubmit = async () => {
         status: formData.value.status,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
+        concurrency_limit: concurrencyLimit,
         quota: quota,
         expires_at: expiresAt,
         rate_limit_5h: rateLimitData.rate_limit_5h,
@@ -1627,7 +1647,8 @@ const handleSubmit = async () => {
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        concurrencyLimit
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1698,6 +1719,7 @@ const closeModals = () => {
     enable_ip_restriction: false,
     ip_whitelist: '',
     ip_blacklist: '',
+    concurrency_limit: 5,
     enable_quota: false,
     quota: null,
     enable_rate_limit: false,

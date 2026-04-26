@@ -833,6 +833,8 @@ export default {
     quotaAmountPlaceholder: '输入 USD 额度限制',
     quotaAmountHint: '设置此密钥可消费的最大金额。0 = 无限制。',
     quotaUsed: '已用额度',
+    concurrencyLimit: '并发限制',
+    concurrencyLimitHint: '此密钥允许同时处理的最大请求数。0 表示不限制，默认 5。',
     reset: '重置',
     resetQuotaUsed: '将已用额度重置为 0',
     resetQuotaTitle: '确认重置额度',

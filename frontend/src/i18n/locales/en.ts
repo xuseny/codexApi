@@ -834,6 +834,8 @@ export default {
     quotaAmountPlaceholder: 'Enter quota limit in USD',
     quotaAmountHint: 'Set the maximum amount this key can spend. 0 = unlimited.',
     quotaUsed: 'Quota Used',
+    concurrencyLimit: 'Concurrency Limit',
+    concurrencyLimitHint: 'Maximum concurrent requests for this key. 0 = unlimited; default is 5.',
     reset: 'Reset',
     resetQuotaUsed: 'Reset used quota to 0',
     resetQuotaTitle: 'Confirm Reset Quota',

@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/dgraph-io/ristretto"
@@ -31,7 +32,9 @@ var (
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
-	ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key 额度已用完")
+	ErrAPIKeyQuotaExhausted      = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key 额度已用完")
+	ErrAPIKeyConcurrencyExceeded = infraerrors.TooManyRequests("API_KEY_CONCURRENCY_EXCEEDED", "api key concurrency limit exceeded")
+	ErrAPIKeyConcurrencyInvalid  = infraerrors.BadRequest("API_KEY_CONCURRENCY_INVALID", "api key concurrency limit must be greater than or equal to 0")
 
 	// Rate limit errors
 	ErrAPIKeyRateLimit5hExceeded = infraerrors.TooManyRequests("API_KEY_RATE_5H_EXCEEDED", "api key 5小时限额已用完")
@@ -40,10 +43,12 @@ var (
 )
 
 const (
-	apiKeyMaxErrorsPerHour = 20
-	apiKeyLastUsedMinTouch = 30 * time.Second
+	DefaultAPIKeyConcurrencyLimit = 5
+	apiKeyMaxErrorsPerHour        = 20
+	apiKeyLastUsedMinTouch        = 30 * time.Second
 	// DB 写失败后的短退避，避免请求路径持续同步重试造成写风暴与高延迟。
-	apiKeyLastUsedFailBackoff = 5 * time.Second
+	apiKeyLastUsedFailBackoff       = 5 * time.Second
+	defaultAPIKeyConcurrencySlotTTL = 30 * time.Minute
 )
 
 type APIKeyRepository interface {
@@ -146,7 +151,15 @@ type APIKeyCache interface {
 	DeleteDeviceLock(ctx context.Context, keyID int64) error
 }
 
-// APIKeyAuthCacheInvalidator 提供认证缓存失效能力
+// apiKeyConcurrencyCache is an optional extension implemented by caches that can
+// enforce per-API-key concurrency slots.
+type apiKeyConcurrencyCache interface {
+	AcquireAPIKeySlot(ctx context.Context, keyID int64, maxConcurrency int, requestID string, ttl time.Duration) (bool, error)
+	ReleaseAPIKeySlot(ctx context.Context, keyID int64, requestID string) error
+	DeleteAPIKeySlots(ctx context.Context, keyID int64) error
+}
+
+// APIKeyAuthCacheInvalidator provides auth cache invalidation.
 type APIKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
 	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
@@ -155,11 +168,12 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name        string   `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
+	Name             string   `json:"name"`
+	GroupID          *int64   `json:"group_id"`
+	CustomKey        *string  `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist      []string `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist      []string `json:"ip_blacklist"` // IP 黑名单
+	ConcurrencyLimit *int     `json:"concurrency_limit"`
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -173,11 +187,12 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name        *string  `json:"name"`
-	GroupID     *int64   `json:"group_id"`
-	Status      *string  `json:"status"`
-	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单（空数组清空）
-	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单（空数组清空）
+	Name             *string  `json:"name"`
+	GroupID          *int64   `json:"group_id"`
+	Status           *string  `json:"status"`
+	IPWhitelist      []string `json:"ip_whitelist"` // IP 白名单（空数组清空）
+	IPBlacklist      []string `json:"ip_blacklist"` // IP 黑名单（空数组清空）
+	ConcurrencyLimit *int     `json:"concurrency_limit"`
 
 	// Quota fields
 	Quota           *float64   `json:"quota"`       // Quota limit in USD (nil = no change, 0 = unlimited)
@@ -241,6 +256,57 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
+}
+
+func (s *APIKeyService) apiKeyConcurrencySlotTTL() time.Duration {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ConcurrencySlotTTLMinutes > 0 {
+		return time.Duration(s.cfg.Gateway.ConcurrencySlotTTLMinutes) * time.Minute
+	}
+	return defaultAPIKeyConcurrencySlotTTL
+}
+
+func (s *APIKeyService) AcquireConcurrencySlot(ctx context.Context, apiKey *APIKey) (func(), error) {
+	if s == nil || s.cache == nil {
+		return func() {}, nil
+	}
+	if apiKey == nil || apiKey.ID <= 0 {
+		return func() {}, nil
+	}
+	if apiKey.ConcurrencyLimit <= 0 {
+		return func() {}, nil
+	}
+	cache, ok := s.cache.(apiKeyConcurrencyCache)
+	if !ok {
+		return func() {}, nil
+	}
+
+	requestID := generateRequestID()
+	acquired, err := cache.AcquireAPIKeySlot(ctx, apiKey.ID, apiKey.ConcurrencyLimit, requestID, s.apiKeyConcurrencySlotTTL())
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, ErrAPIKeyConcurrencyExceeded
+	}
+
+	return func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := cache.ReleaseAPIKeySlot(bgCtx, apiKey.ID, requestID); err != nil {
+			logger.LegacyPrintf("service.apikey", "Warning: failed to release api key slot for %d (req=%s): %v", apiKey.ID, requestID, err)
+		}
+	}, nil
+}
+
+func (s *APIKeyService) ClearConcurrencySlots(ctx context.Context, keyID int64) {
+	if s == nil || s.cache == nil || keyID <= 0 {
+		return
+	}
+	cache, ok := s.cache.(apiKeyConcurrencyCache)
+	if !ok {
+		return
+	}
+	_ = cache.DeleteAPIKeySlots(ctx, keyID)
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {
@@ -353,6 +419,14 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
+	concurrencyLimit := DefaultAPIKeyConcurrencyLimit
+	if req.ConcurrencyLimit != nil {
+		if *req.ConcurrencyLimit < 0 {
+			return nil, ErrAPIKeyConcurrencyInvalid
+		}
+		concurrencyLimit = *req.ConcurrencyLimit
+	}
+
 	// 验证分组权限（如果指定了分组）
 	if req.GroupID != nil {
 		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
@@ -403,18 +477,19 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	// 创建API Key记录
 	apiKey := &APIKey{
-		UserID:      userID,
-		Key:         key,
-		Name:        req.Name,
-		GroupID:     req.GroupID,
-		Status:      StatusActive,
-		IPWhitelist: req.IPWhitelist,
-		IPBlacklist: req.IPBlacklist,
-		Quota:       req.Quota,
-		QuotaUsed:   0,
-		RateLimit5h: req.RateLimit5h,
-		RateLimit1d: req.RateLimit1d,
-		RateLimit7d: req.RateLimit7d,
+		UserID:           userID,
+		Key:              key,
+		Name:             req.Name,
+		GroupID:          req.GroupID,
+		Status:           StatusActive,
+		ConcurrencyLimit: concurrencyLimit,
+		IPWhitelist:      req.IPWhitelist,
+		IPBlacklist:      req.IPBlacklist,
+		Quota:            req.Quota,
+		QuotaUsed:        0,
+		RateLimit5h:      req.RateLimit5h,
+		RateLimit1d:      req.RateLimit1d,
+		RateLimit7d:      req.RateLimit7d,
 	}
 
 	// Set expiration time if specified
@@ -541,10 +616,16 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 			return nil, fmt.Errorf("%w: %v", ErrInvalidIPPattern, invalid)
 		}
 	}
+	if req.ConcurrencyLimit != nil && *req.ConcurrencyLimit < 0 {
+		return nil, ErrAPIKeyConcurrencyInvalid
+	}
 
 	// 更新字段
 	if req.Name != nil {
 		apiKey.Name = *req.Name
+	}
+	if req.ConcurrencyLimit != nil {
+		apiKey.ConcurrencyLimit = *req.ConcurrencyLimit
 	}
 
 	if req.GroupID != nil {
@@ -662,6 +743,7 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	if s.cache != nil {
 		_ = s.cache.DeleteDeviceLock(ctx, id)
 	}
+	s.ClearConcurrencySlots(ctx, id)
 
 	if err := s.apiKeyRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete api key: %w", err)

@@ -1,11 +1,9 @@
 import axios from 'axios'
 
-const IMAGE_GENERATION_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_PROMPT_OPTIMIZER_MODEL = 'gpt-4.1-mini'
 
 const imageGatewayClient = axios.create({
-  baseURL: '',
-  timeout: IMAGE_GENERATION_TIMEOUT_MS
+  baseURL: ''
 })
 
 export type ImageModel = 'gpt-image-2' | 'gpt-image-1.5' | 'gpt-image-1'
@@ -80,7 +78,6 @@ export const imagesAPI = {
   async generate(payload: GenerateImageRequest): Promise<ImagesGenerationResponse> {
     const { apiKey, ...body } = payload
     const response = await imageGatewayClient.post<ImagesGenerationResponse>('/v1/images/generations', body, {
-      timeout: IMAGE_GENERATION_TIMEOUT_MS,
       headers: {
         ...authHeaders(apiKey),
         'Content-Type': 'application/json'
@@ -102,7 +99,6 @@ export const imagesAPI = {
     }
 
     const response = await imageGatewayClient.post<ImagesGenerationResponse>('/v1/images/edits', formData, {
-      timeout: IMAGE_GENERATION_TIMEOUT_MS,
       headers: authHeaders(payload.apiKey)
     })
 
@@ -128,7 +124,6 @@ export const imagesAPI = {
         temperature: 0.7
       },
       {
-        timeout: IMAGE_GENERATION_TIMEOUT_MS,
         headers: {
           ...authHeaders(payload.apiKey),
           'Content-Type': 'application/json'
