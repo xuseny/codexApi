@@ -112,6 +112,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
+	gatewayPlatform := resolveOpenAICompatibleGatewayPlatform(apiKey)
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -122,8 +123,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	for {
 		c.Set("openai_chat_completions_fallback_model", "")
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForPlatform(
 			c.Request.Context(),
+			gatewayPlatform,
 			apiKey.GroupID,
 			"",
 			sessionHash,
@@ -146,8 +148,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					reqLog.Info("openai_chat_completions.fallback_to_default_model",
 						zap.String("default_mapped_model", defaultModel),
 					)
-					selection, scheduleDecision, err = h.gatewayService.SelectAccountWithScheduler(
+					selection, scheduleDecision, err = h.gatewayService.SelectAccountWithSchedulerForPlatform(
 						c.Request.Context(),
+						gatewayPlatform,
 						apiKey.GroupID,
 						"",
 						sessionHash,

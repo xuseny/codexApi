@@ -70,7 +70,7 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 md:grid-cols-3 lg:grid-cols-6" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -108,6 +108,56 @@
               />
             </svg>
             OpenAI
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'windsurf'; accountCategory = 'apikey'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'windsurf'
+                ? 'bg-white text-cyan-600 shadow-sm dark:bg-dark-600 dark:text-cyan-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <svg
+              class="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.7"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M3 12c2.25-2 4.5-2 6.75 0s4.5 2 6.75 0S21 10 21 10M3 16c2.25-2 4.5-2 6.75 0s4.5 2 6.75 0S21 14 21 14"
+              />
+            </svg>
+            Windsurf
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'kiro'; accountCategory = 'apikey'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'kiro'
+                ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <svg
+              class="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="1.7"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 6v12M18 6 8 12l10 6" />
+              <circle cx="6" cy="6" r="2" fill="currentColor" stroke="none" />
+              <circle cx="6" cy="18" r="2" fill="currentColor" stroke="none" />
+              <circle cx="18" cy="6" r="2" fill="currentColor" stroke="none" />
+              <circle cx="18" cy="18" r="2" fill="currentColor" stroke="none" />
+            </svg>
+            Kiro
           </button>
           <button
             type="button"
@@ -860,7 +910,11 @@
                 ? 'https://api.openai.com'
                 : form.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
-                  : 'https://api.anthropic.com'
+                  : form.platform === 'windsurf'
+                    ? 'http://localhost:3003'
+                    : form.platform === 'kiro'
+                      ? 'http://localhost:8000'
+                      : 'https://api.anthropic.com'
             "
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
@@ -877,7 +931,11 @@
                 ? 'sk-proj-...'
                 : form.platform === 'gemini'
                   ? 'AIza...'
-                  : 'sk-ant-...'
+                  : form.platform === 'windsurf'
+                    ? 'sk-...'
+                    : form.platform === 'kiro'
+                      ? 'sk-...'
+                      : 'sk-ant-...'
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
@@ -3008,12 +3066,14 @@ const oauthStepTitle = computed(() => {
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  if (form.platform === 'windsurf' || form.platform === 'kiro') return t('admin.accounts.upstream.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
+  if (form.platform === 'windsurf' || form.platform === 'kiro') return t('admin.accounts.upstream.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -3330,6 +3390,9 @@ const form = reactive({
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
+  if (form.platform === 'windsurf' || form.platform === 'kiro') {
+    return false
+  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -3428,7 +3491,11 @@ watch(
         ? 'https://api.openai.com'
         : newPlatform === 'gemini'
           ? 'https://generativelanguage.googleapis.com'
-          : 'https://api.anthropic.com'
+          : newPlatform === 'windsurf'
+            ? ''
+            : newPlatform === 'kiro'
+              ? ''
+              : 'https://api.anthropic.com'
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -3441,6 +3508,12 @@ watch(
       antigravityWhitelistModels.value = []
       accountCategory.value = 'oauth-based'
       antigravityAccountType.value = 'oauth'
+    } else if (newPlatform === 'windsurf' || newPlatform === 'kiro') {
+      accountCategory.value = 'apikey'
+      allowOverages.value = false
+      antigravityWhitelistModels.value = []
+      antigravityModelMappings.value = []
+      antigravityModelRestrictionMode.value = 'mapping'
     } else {
       allowOverages.value = false
       antigravityWhitelistModels.value = []
@@ -4127,6 +4200,10 @@ const handleSubmit = async () => {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
   }
+  if ((form.platform === 'windsurf' || form.platform === 'kiro') && !apiKeyBaseUrl.value.trim()) {
+    appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+    return
+  }
 
   // Determine default base URL based on platform
   const defaultBaseUrl =
@@ -4134,7 +4211,11 @@ const handleSubmit = async () => {
       ? 'https://api.openai.com'
       : form.platform === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
-        : 'https://api.anthropic.com'
+        : form.platform === 'windsurf'
+          ? ''
+          : form.platform === 'kiro'
+            ? ''
+            : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {

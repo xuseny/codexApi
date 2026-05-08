@@ -50,6 +50,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if account != nil && account.IsKiro() {
+		return s.ForwardOpenAICompatibleChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+	}
+
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request
@@ -277,6 +281,196 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	return result, handleErr
+}
+
+// ForwardOpenAICompatibleChatCompletions forwards a Chat Completions request to
+// an OpenAI-compatible upstream without converting it to Responses. Kiro proxy
+// resources commonly expose this surface directly, so they use this path.
+func (s *OpenAIGatewayService) ForwardOpenAICompatibleChatCompletions(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	promptCacheKey string,
+	defaultMappedModel string,
+) (*OpenAIForwardResult, error) {
+	if account == nil {
+		return nil, errors.New("nil account")
+	}
+	startTime := time.Now()
+
+	var chatReq apicompat.ChatCompletionsRequest
+	if err := json.Unmarshal(body, &chatReq); err != nil {
+		return nil, fmt.Errorf("parse chat completions request: %w", err)
+	}
+	originalModel := chatReq.Model
+	reqStream := chatReq.Stream
+	reasoningEffort := extractCCReasoningEffortFromBody(body)
+
+	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	if upstreamModel != "" && upstreamModel != originalModel {
+		nextBody, err := sjson.SetBytes(body, "model", upstreamModel)
+		if err != nil {
+			return nil, fmt.Errorf("rewrite model in chat completions body: %w", err)
+		}
+		body = nextBody
+	}
+
+	logger.L().Debug("openai-compatible chat_completions passthrough: model mapping applied",
+		zap.Int64("account_id", account.ID),
+		zap.String("platform", account.Platform),
+		zap.String("original_model", originalModel),
+		zap.String("billing_model", billingModel),
+		zap.String("upstream_model", upstreamModel),
+		zap.Bool("stream", reqStream),
+	)
+
+	token, _, err := s.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("get access token: %w", err)
+	}
+
+	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+	upstreamReq, err := s.buildUpstreamRequestOpenAICompatibleChatCompletions(upstreamCtx, c, account, body, token, reqStream)
+	releaseUpstreamCtx()
+	if err != nil {
+		return nil, fmt.Errorf("build upstream request: %w", err)
+	}
+	if promptCacheKey = strings.TrimSpace(promptCacheKey); promptCacheKey != "" {
+		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
+	}
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	setOpsUpstreamRequestBody(c, body)
+	if c != nil {
+		c.Set("openai_passthrough", true)
+	}
+
+	upstreamStart := time.Now()
+	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	if err != nil {
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		setOpsUpstreamError(c, 0, safeErr, "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: 0,
+			Passthrough:        true,
+			Kind:               "request_error",
+			Message:            safeErr,
+		})
+		if c != nil {
+			writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
+		}
+		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
+			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
+		}
+		return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
+	}
+
+	var usage *OpenAIUsage
+	var firstTokenMs *int
+	if reqStream {
+		result, err := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, originalModel, upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+		usage = result.usage
+		firstTokenMs = result.firstTokenMs
+	} else {
+		usage, err = s.handleNonStreamingResponsePassthrough(ctx, resp, c, originalModel, upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if usage == nil {
+		usage = &OpenAIUsage{}
+	}
+
+	return &OpenAIForwardResult{
+		RequestID:       resp.Header.Get("x-request-id"),
+		Usage:           *usage,
+		Model:           originalModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+		ServiceTier:     extractOpenAIServiceTierFromBody(body),
+		ReasoningEffort: reasoningEffort,
+		Stream:          reqStream,
+		OpenAIWSMode:    false,
+		Duration:        time.Since(startTime),
+		FirstTokenMs:    firstTokenMs,
+	}, nil
+}
+
+func (s *OpenAIGatewayService) buildUpstreamRequestOpenAICompatibleChatCompletions(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	token string,
+	stream bool,
+) (*http.Request, error) {
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		if account.IsKiro() {
+			return nil, errors.New("kiro base_url not configured")
+		}
+		if account.IsWindsurf() {
+			return nil, errors.New("windsurf base_url not configured")
+		}
+		return nil, errors.New("openai-compatible chat base_url not configured")
+	}
+	validatedURL, err := s.validateUpstreamBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	targetURL := buildOpenAIChatCompletionsURL(validatedURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+
+	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
+	if c != nil && c.Request != nil {
+		for key, values := range c.Request.Header {
+			lower := strings.ToLower(strings.TrimSpace(key))
+			if !isOpenAIPassthroughAllowedRequestHeader(lower, allowTimeoutHeaders) {
+				continue
+			}
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+	}
+
+	req.Header.Del("authorization")
+	req.Header.Del("x-api-key")
+	req.Header.Del("x-goog-api-key")
+	req.Header.Set("authorization", "Bearer "+token)
+	if req.Header.Get("content-type") == "" {
+		req.Header.Set("content-type", "application/json")
+	}
+	if req.Header.Get("accept") == "" {
+		if stream {
+			req.Header.Set("accept", "text/event-stream")
+		} else {
+			req.Header.Set("accept", "application/json")
+		}
+	}
+	return req, nil
 }
 
 func normalizeResponsesRequestServiceTier(req *apicompat.ResponsesRequest) {

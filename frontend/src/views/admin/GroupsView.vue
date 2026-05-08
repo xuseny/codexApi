@@ -104,6 +104,10 @@
                   ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                   : value === 'openai'
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                    : value === 'windsurf'
+                      ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+                    : value === 'kiro'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
                     : value === 'antigravity'
                       ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
                       : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
@@ -2661,6 +2665,10 @@
                       ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                       : group.platform === 'openai'
                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                        : group.platform === 'windsurf'
+                          ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+                        : group.platform === 'kiro'
+                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
                         : group.platform === 'antigravity'
                           ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
                           : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
@@ -2823,6 +2831,8 @@ const exclusiveOptions = computed(() => [
 const platformOptions = computed(() => [
   { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
+  { value: "windsurf", label: "Windsurf" },
+  { value: "kiro", label: "Kiro" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
 ]);
@@ -2831,6 +2841,8 @@ const platformFilterOptions = computed(() => [
   { value: "", label: t("admin.groups.allPlatforms") },
   { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
+  { value: "windsurf", label: "Windsurf" },
+  { value: "kiro", label: "Kiro" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
 ]);

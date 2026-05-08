@@ -63,8 +63,9 @@ func NormalizeInboundEndpoint(path string) string {
 // account platform and the normalized inbound endpoint.
 //
 // Platform-specific rules:
-//   - OpenAI always forwards to /v1/responses (with optional subpath
+//   - OpenAI/Windsurf forward to /v1/responses (with optional subpath
 //     such as /v1/responses/compact preserved from the raw URL).
+//   - Kiro forwards OpenAI-compatible chat requests to /v1/chat/completions.
 //   - Anthropic  → /v1/messages
 //   - Gemini     → /v1beta/models
 //   - Antigravity → /v1/messages (Claude) or gemini (Gemini)
@@ -74,7 +75,7 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 	inbound = strings.TrimSpace(inbound)
 
 	switch platform {
-	case service.PlatformOpenAI:
+	case service.PlatformOpenAI, service.PlatformWindsurf:
 		if inbound == EndpointImagesGenerations || inbound == EndpointImagesEdits {
 			return inbound
 		}
@@ -84,6 +85,12 @@ func DeriveUpstreamEndpoint(inbound, rawRequestPath, platform string) string {
 			return EndpointResponses + suffix
 		}
 		return EndpointResponses
+
+	case service.PlatformKiro:
+		if inbound == EndpointChatCompletions {
+			return EndpointChatCompletions
+		}
+		return inbound
 
 	case service.PlatformAnthropic:
 		return EndpointMessages

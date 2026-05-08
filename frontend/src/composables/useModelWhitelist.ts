@@ -354,6 +354,8 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'claude': return claudeModels
     case 'gemini': return geminiModels
     case 'antigravity': return antigravityModels
+    case 'windsurf': return []
+    case 'kiro': return []
     case 'zhipu': return zhipuModels
     case 'qwen': return qwenModels
     case 'deepseek': return deepseekModels
@@ -378,6 +380,8 @@ export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'openai') return openaiPresetMappings
   if (platform === 'gemini') return geminiPresetMappings
   if (platform === 'antigravity') return antigravityPresetMappings
+  if (platform === 'windsurf') return []
+  if (platform === 'kiro') return []
   if (platform === 'bedrock') return bedrockPresetMappings
   return anthropicPresetMappings
 }

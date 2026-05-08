@@ -975,6 +975,18 @@ func (a *Account) IsOpenAI() bool {
 	return a.Platform == PlatformOpenAI
 }
 
+func (a *Account) IsWindsurf() bool {
+	return a.Platform == PlatformWindsurf
+}
+
+func (a *Account) IsKiro() bool {
+	return a.Platform == PlatformKiro
+}
+
+func (a *Account) IsOpenAICompatible() bool {
+	return a.Platform == PlatformOpenAI || a.Platform == PlatformWindsurf || a.Platform == PlatformKiro
+}
+
 func (a *Account) IsAnthropic() bool {
 	return a.Platform == PlatformAnthropic
 }
@@ -984,18 +996,21 @@ func (a *Account) IsOpenAIOAuth() bool {
 }
 
 func (a *Account) IsOpenAIApiKey() bool {
-	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
+	return a.IsOpenAICompatible() && a.Type == AccountTypeAPIKey
 }
 
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() {
+	if !a.IsOpenAICompatible() {
 		return ""
 	}
 	if a.Type == AccountTypeAPIKey {
 		baseURL := a.GetCredential("base_url")
 		if baseURL != "" {
-			return baseURL
+			return strings.TrimRight(strings.TrimSpace(baseURL), "/")
 		}
+	}
+	if a.IsWindsurf() || a.IsKiro() {
+		return ""
 	}
 	return "https://api.openai.com"
 }
@@ -1063,6 +1078,9 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if a.IsWindsurf() || a.IsKiro() {
+		return capability == "" && a.Type == AccountTypeAPIKey
+	}
 	if !a.IsOpenAI() {
 		return false
 	}

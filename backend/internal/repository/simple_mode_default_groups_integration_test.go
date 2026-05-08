@@ -33,6 +33,8 @@ func TestEnsureSimpleModeDefaultGroups_CreatesMissingDefaults(t *testing.T) {
 	assertGroupExists(service.PlatformGemini + "-default")
 	assertGroupExists(service.PlatformAntigravity + "-default-1")
 	assertGroupExists(service.PlatformAntigravity + "-default-2")
+	assertGroupExists(service.PlatformWindsurf + "-default")
+	assertGroupExists(service.PlatformKiro + "-default")
 }
 
 func TestEnsureSimpleModeDefaultGroups_IgnoresSoftDeletedGroups(t *testing.T) {

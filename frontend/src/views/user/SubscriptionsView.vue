@@ -261,6 +261,8 @@ function platformAccentDotClass(p: string): string {
   switch (p) {
     case 'anthropic': return 'bg-orange-500'
     case 'openai': return 'bg-emerald-500'
+    case 'windsurf': return 'bg-cyan-500'
+    case 'kiro': return 'bg-rose-500'
     case 'antigravity': return 'bg-purple-500'
     case 'gemini': return 'bg-blue-500'
     default: return 'bg-gray-400'

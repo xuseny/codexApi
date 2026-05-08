@@ -1839,6 +1839,37 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle OpenAI-compatible account pools that expose chat completions.
+	if account.IsWindsurf() || account.IsKiro() {
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, openai.DefaultModels)
+			return
+		}
+
+		var models []openai.Model
+		for requestedModel := range mapping {
+			var found bool
+			for _, dm := range openai.DefaultModels {
+				if dm.ID == requestedModel {
+					models = append(models, dm)
+					found = true
+					break
+				}
+			}
+			if !found {
+				models = append(models, openai.Model{
+					ID:          requestedModel,
+					Object:      "model",
+					Type:        "model",
+					DisplayName: requestedModel,
+				})
+			}
+		}
+		response.Success(c, models)
+		return
+	}
+
 	// Handle Gemini accounts
 	if account.IsGemini() {
 		// For OAuth accounts: return default Gemini models

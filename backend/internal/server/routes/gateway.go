@@ -42,7 +42,12 @@ func RegisterGatewayRoutes(
 	{
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformKiro {
+				writeGatewayUnsupportedNotFound(c, "Messages API is not supported for this platform")
+				return
+			}
+			if isOpenAIResponsesCompatibleGatewayPlatform(platform) {
 				h.OpenAIGateway.Messages(c)
 				return
 			}
@@ -50,7 +55,7 @@ func RegisterGatewayRoutes(
 		})
 		// /v1/messages/count_tokens: OpenAI groups get 404
 		gateway.POST("/messages/count_tokens", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			if isCountTokensUnsupportedGatewayPlatform(getGroupPlatform(c)) {
 				c.JSON(http.StatusNotFound, gin.H{
 					"type": "error",
 					"error": gin.H{
@@ -66,23 +71,33 @@ func RegisterGatewayRoutes(
 		gateway.GET("/usage", h.Gateway.Usage)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformKiro {
+				writeGatewayUnsupportedNotFound(c, "Responses API is not supported for this platform")
+				return
+			}
+			if isOpenAIResponsesCompatibleGatewayPlatform(platform) {
 				h.OpenAIGateway.Responses(c)
 				return
 			}
 			h.Gateway.Responses(c)
 		})
 		gateway.POST("/responses/*subpath", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			platform := getGroupPlatform(c)
+			if platform == service.PlatformKiro {
+				writeGatewayUnsupportedNotFound(c, "Responses API is not supported for this platform")
+				return
+			}
+			if isOpenAIResponsesCompatibleGatewayPlatform(platform) {
 				h.OpenAIGateway.Responses(c)
 				return
 			}
 			h.Gateway.Responses(c)
 		})
-		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
+		gateway.GET("/responses", openAIResponsesWebSocketHandler(h))
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			if isOpenAIChatCompatibleGatewayPlatform(getGroupPlatform(c)) {
 				h.OpenAIGateway.ChatCompletions(c)
 				return
 			}
@@ -131,7 +146,12 @@ func RegisterGatewayRoutes(
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformOpenAI {
+		platform := getGroupPlatform(c)
+		if platform == service.PlatformKiro {
+			writeGatewayUnsupportedNotFound(c, "Responses API is not supported for this platform")
+			return
+		}
+		if isOpenAIResponsesCompatibleGatewayPlatform(platform) {
 			h.OpenAIGateway.Responses(c)
 			return
 		}
@@ -139,17 +159,17 @@ func RegisterGatewayRoutes(
 	}
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, responsesHandler)
 	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, responsesHandler)
-	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.ResponsesWebSocket)
+	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, openAIResponsesWebSocketHandler(h))
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic)
 	{
 		codexDirect.POST("/responses", responsesHandler)
 		codexDirect.POST("/responses/*subpath", responsesHandler)
-		codexDirect.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
+		codexDirect.GET("/responses", openAIResponsesWebSocketHandler(h))
 	}
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
 	r.POST("/chat/completions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformOpenAI {
+		if isOpenAIChatCompatibleGatewayPlatform(getGroupPlatform(c)) {
 			h.OpenAIGateway.ChatCompletions(c)
 			return
 		}
@@ -222,4 +242,40 @@ func getGroupPlatform(c *gin.Context) string {
 		return ""
 	}
 	return apiKey.Group.Platform
+}
+
+func isOpenAIResponsesCompatibleGatewayPlatform(platform string) bool {
+	return platform == service.PlatformOpenAI || platform == service.PlatformWindsurf
+}
+
+func isOpenAIChatCompatibleGatewayPlatform(platform string) bool {
+	return isOpenAIResponsesCompatibleGatewayPlatform(platform) || platform == service.PlatformKiro
+}
+
+func isCountTokensUnsupportedGatewayPlatform(platform string) bool {
+	return isOpenAIChatCompatibleGatewayPlatform(platform)
+}
+
+func writeGatewayUnsupportedNotFound(c *gin.Context, message string) {
+	c.JSON(http.StatusNotFound, gin.H{
+		"error": gin.H{
+			"type":    "not_found_error",
+			"message": message,
+		},
+	})
+}
+
+func openAIResponsesWebSocketHandler(h *handler.Handlers) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Responses WebSocket is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.ResponsesWebSocket(c)
+	}
 }
