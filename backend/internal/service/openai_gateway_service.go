@@ -329,6 +329,8 @@ type OpenAIGatewayService struct {
 	httpUpstream          HTTPUpstream
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
+	windsurfAuthService   *WindsurfAuthService
+	kiroOAuthService      *KiroOAuthService
 	toolCorrector         *CodexToolCorrector
 	openaiWSResolver      OpenAIWSProtocolResolver
 	resolver              *ModelPricingResolver
@@ -369,6 +371,8 @@ func NewOpenAIGatewayService(
 	httpUpstream HTTPUpstream,
 	deferredService *DeferredService,
 	openAITokenProvider *OpenAITokenProvider,
+	windsurfAuthService *WindsurfAuthService,
+	kiroOAuthService *KiroOAuthService,
 	resolver *ModelPricingResolver,
 	channelService *ChannelService,
 	balanceNotifyService *BalanceNotifyService,
@@ -397,6 +401,8 @@ func NewOpenAIGatewayService(
 		httpUpstream:          httpUpstream,
 		deferredService:       deferredService,
 		openAITokenProvider:   openAITokenProvider,
+		windsurfAuthService:   windsurfAuthService,
+		kiroOAuthService:      kiroOAuthService,
 		toolCorrector:         NewCodexToolCorrector(),
 		openaiWSResolver:      NewOpenAIWSProtocolResolver(cfg),
 		resolver:              resolver,
@@ -1939,6 +1945,26 @@ func (s *OpenAIGatewayService) schedulingConfig() config.GatewaySchedulingConfig
 func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
 	switch account.Type {
 	case AccountTypeOAuth:
+		if account.IsWindsurf() {
+			if s.windsurfAuthService == nil {
+				return "", "", errors.New("windsurf auth service is not configured")
+			}
+			accessToken, err := s.windsurfAuthService.GetAccessToken(ctx, account)
+			if err != nil {
+				return "", "", err
+			}
+			return accessToken, "oauth", nil
+		}
+		if account.IsKiro() {
+			if s.kiroOAuthService == nil {
+				return "", "", errors.New("kiro oauth service is not configured")
+			}
+			accessToken, err := s.kiroOAuthService.GetAccessToken(ctx, account)
+			if err != nil {
+				return "", "", err
+			}
+			return accessToken, "oauth", nil
+		}
 		// 使用 TokenProvider 获取缓存的 token
 		if s.openAITokenProvider != nil {
 			accessToken, err := s.openAITokenProvider.GetAccessToken(ctx, account)

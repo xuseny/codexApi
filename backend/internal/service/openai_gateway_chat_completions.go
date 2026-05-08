@@ -50,8 +50,11 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if account != nil && account.IsWindsurf() {
+		return s.ForwardWindsurfChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+	}
 	if account != nil && account.IsKiro() {
-		return s.ForwardOpenAICompatibleChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+		return s.ForwardKiroChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel)
 	}
 
 	startTime := time.Now()

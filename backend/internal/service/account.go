@@ -238,6 +238,38 @@ func (a *Account) GetCredential(key string) string {
 //   - RFC3339 字符串: "2025-01-01T00:00:00Z"
 //   - Unix 时间戳字符串: "1735689600"
 //   - Unix 时间戳数字: 1735689600 (float64/int64/json.Number)
+func (a *Account) GetCredentialBool(key string) bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	v, ok := a.Credentials[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		switch strings.ToLower(strings.TrimSpace(val)) {
+		case "1", "true", "yes", "on":
+			return true
+		default:
+			return false
+		}
+	case json.Number:
+		n, _ := strconv.ParseInt(val.String(), 10, 64)
+		return n != 0
+	case float64:
+		return val != 0
+	case int64:
+		return val != 0
+	case int:
+		return val != 0
+	default:
+		return false
+	}
+}
+
 func (a *Account) GetCredentialAsTime(key string) *time.Time {
 	s := a.GetCredential(key)
 	if s == "" {

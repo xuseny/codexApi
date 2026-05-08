@@ -41,6 +41,12 @@ func RegisterAdminRoutes(
 		// Antigravity OAuth
 		registerAntigravityOAuthRoutes(admin, h)
 
+		// Windsurf auth
+		registerWindsurfAuthRoutes(admin, h)
+
+		// Kiro OAuth
+		registerKiroOAuthRoutes(admin, h)
+
 		// 代理管理
 		registerProxyRoutes(admin, h)
 
@@ -356,6 +362,25 @@ func registerAntigravityOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers)
 		antigravity.POST("/oauth/auth-url", h.Admin.AntigravityOAuth.GenerateAuthURL)
 		antigravity.POST("/oauth/exchange-code", h.Admin.AntigravityOAuth.ExchangeCode)
 		antigravity.POST("/oauth/refresh-token", h.Admin.AntigravityOAuth.RefreshToken)
+	}
+}
+
+func registerWindsurfAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	windsurf := admin.Group("/windsurf")
+	{
+		windsurf.POST("/auth/login", h.Admin.WindsurfAuth.Login)
+		windsurf.POST("/auth/refresh-token", h.Admin.WindsurfAuth.RefreshToken)
+		windsurf.POST("/auth/accounts/:id/refresh", h.Admin.WindsurfAuth.RefreshAccountToken)
+	}
+}
+
+func registerKiroOAuthRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	kiro := admin.Group("/kiro")
+	{
+		kiro.POST("/oauth/device-auth", h.Admin.KiroOAuth.StartDeviceAuth)
+		kiro.POST("/oauth/exchange-device-code", h.Admin.KiroOAuth.ExchangeDeviceCode)
+		kiro.POST("/oauth/refresh-token", h.Admin.KiroOAuth.RefreshToken)
+		kiro.POST("/oauth/accounts/:id/refresh", h.Admin.KiroOAuth.RefreshAccountToken)
 	}
 }
 
