@@ -93,6 +93,14 @@ services:
       # SECURITY: This repo does not embed third-party client_secret.
       - GEMINI_CLI_OAUTH_CLIENT_SECRET=${GEMINI_CLI_OAUTH_CLIENT_SECRET:-}
       - ANTIGRAVITY_OAUTH_CLIENT_SECRET=${ANTIGRAVITY_OAUTH_CLIENT_SECRET:-}
+
+      # =======================================================================
+      # Windsurf Built-in Account Pool
+      # =======================================================================
+      - WINDSURF_LS_BINARY_PATH=${WINDSURF_LS_BINARY_PATH:-/app/data/windsurf/language_server_linux_x64}
+      - WINDSURF_LS_DATA_DIR=${WINDSURF_LS_DATA_DIR:-/app/data/windsurf/ls}
+      - WINDSURF_LS_API_SERVER_URL=${WINDSURF_LS_API_SERVER_URL:-https://server.self-serve.windsurf.com}
+      - WINDSURF_CLIENT_VERSION=${WINDSURF_CLIENT_VERSION:-2.0.67}
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s

@@ -99,6 +99,8 @@ RUN apk add --no-cache \
     krb5-libs \
     libldap \
     libedit \
+    gcompat \
+    libstdc++ \
     && rm -rf /var/cache/apk/*
 
 # Copy pg_dump and psql from the same postgres image used in docker-compose
