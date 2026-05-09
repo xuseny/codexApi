@@ -771,6 +771,33 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}
 		}
 		if selection == nil || selection.Account == nil {
+			if len(failedAccountIDs) == 0 &&
+				nativeWindsurfDispatch &&
+				!mappedDispatchTried &&
+				apiKey.Group != nil &&
+				apiKey.Group.AllowMessagesDispatch &&
+				preferredMappedModel != "" {
+				nativeWindsurfDispatch = false
+				mappedDispatchTried = true
+				effectiveMappedModel = preferredMappedModel
+				reqLog.Info("openai_messages.fallback_mapped_dispatch_after_empty_native_windsurf_selection",
+					zap.String("requested_model", routingModel),
+					zap.String("mapped_model", preferredMappedModel),
+				)
+				continue
+			}
+			if len(failedAccountIDs) == 0 &&
+				!nativeWindsurfDispatchTried &&
+				shouldRetryOpenAIMessagesWithNativeWindsurf(routingModel, currentRoutingModel) {
+				nativeWindsurfDispatch = true
+				nativeWindsurfDispatchTried = true
+				effectiveMappedModel = ""
+				reqLog.Info("openai_messages.retry_native_windsurf_after_empty_mapped_selection",
+					zap.String("requested_model", routingModel),
+					zap.String("failed_mapped_model", currentRoutingModel),
+				)
+				continue
+			}
 			h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
 			return
 		}

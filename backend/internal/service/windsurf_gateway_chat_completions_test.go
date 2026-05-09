@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -80,6 +81,15 @@ func TestWindsurfResponsesToChatCompletions_ToolsAndChoice(t *testing.T) {
 	require.Contains(t, instruction, `{"function_call":{"name":"<function_name>","arguments":{}}}`)
 	require.Contains(t, instruction, `tool_choice requires the function "Read"`)
 	require.Contains(t, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, chatReq.Model), `Required tool: Read`)
+}
+
+func TestWindsurfBuildCascadeConfigUsesCompactToolHint(t *testing.T) {
+	fullInstruction := strings.Repeat("tool schema ", 200) + "\nAvailable functions:\n### Read"
+	config := string(windsurfBuildCascadeConfig(1, "model_uid", fullInstruction))
+
+	require.Contains(t, config, "Client-side tools are available")
+	require.NotContains(t, config, "Available functions")
+	require.NotContains(t, config, "tool schema tool schema")
 }
 
 func TestBuildWindsurfRawMessagesToolHistory(t *testing.T) {

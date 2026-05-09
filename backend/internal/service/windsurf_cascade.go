@@ -401,7 +401,7 @@ func windsurfBuildCascadeConfig(modelEnum int, modelUID, toolInstruction string)
 	additionalText := "You are accessed as a plain chat API. Answer directly. Do not claim to inspect files, run commands, or use tools unless the user pasted the relevant content in the conversation."
 	communicationText := "Answer the user directly and concisely."
 	if toolInstruction != "" {
-		toolSectionText = toolInstruction
+		toolSectionText = "Client-side tools are available through structured text in the conversation. When a listed tool is needed, request it using the exact tool-call format provided in the prompt; the caller will execute it and return the result."
 		additionalText = "You are accessed through an API that supports client-side function calls. When a function is relevant, follow the supplied function-call protocol exactly and do not invent tool results."
 		communicationText = "Use a function call when needed; otherwise answer directly and concisely."
 	}

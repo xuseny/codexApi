@@ -17,13 +17,17 @@ vi.mock('@/composables/useClipboard', () => ({
 import UseKeyModal from '../UseKeyModal.vue'
 
 describe('UseKeyModal', () => {
-  const mountModal = (platform: 'openai' | 'anthropic' | 'windsurf') =>
+  const mountModal = (
+    platform: 'openai' | 'anthropic' | 'windsurf',
+    extraProps: Record<string, unknown> = {}
+  ) =>
     mount(UseKeyModal, {
       props: {
         show: true,
         apiKey: 'sk-test',
         baseUrl: 'https://example.com/v1',
-        platform
+        platform,
+        ...extraProps
       },
       global: {
         stubs: {
@@ -71,8 +75,8 @@ describe('UseKeyModal', () => {
     expect(config.permission.grep).toBe('allow')
   })
 
-  it('renders Anthropic provider in OpenAI OpenCode config for Claude dispatch', async () => {
-    const wrapper = mountModal('openai')
+  it('renders Anthropic provider in OpenAI OpenCode config when Claude dispatch is enabled', async () => {
+    const wrapper = mountModal('openai', { allowMessagesDispatch: true })
 
     await openOpenCodeTab(wrapper)
 
@@ -80,6 +84,15 @@ describe('UseKeyModal', () => {
     expect(config.provider.anthropic.npm).toBe('@ai-sdk/anthropic')
     expect(config.provider.anthropic.models['claude-opus-4-7'].tool_call).toBe(true)
     expect(config.provider.anthropic.models['claude-opus-4-7'].reasoning).toBe(true)
+  })
+
+  it('does not render Anthropic provider in normal OpenAI OpenCode config', async () => {
+    const wrapper = mountModal('openai')
+
+    await openOpenCodeTab(wrapper)
+
+    const config = JSON.parse(wrapper.find('pre code').text())
+    expect(config.provider.anthropic).toBeUndefined()
   })
 
   it('renders combined OpenAI and Anthropic OpenCode config for Windsurf groups', async () => {

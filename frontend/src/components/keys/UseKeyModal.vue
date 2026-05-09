@@ -419,7 +419,7 @@ const currentFiles = computed((): FileConfig[] => {
       case 'anthropic':
         return [generateOpenCodeConfig('anthropic', apiBase, apiKey)]
       case 'openai':
-        return [generateOpenCodeConfig('openai', apiBase, apiKey)]
+        return [generateOpenCodeConfig('openai', apiBase, apiKey, undefined, props.allowMessagesDispatch)]
       case 'gemini':
         return [generateOpenCodeConfig('gemini', geminiBase, apiKey)]
       case 'antigravity':
@@ -653,34 +653,22 @@ const openCodeToolPermission = {
   websearch: 'ask'
 }
 
-const openCodeReasoningInclude = ['reasoning.encrypted_content']
-
 const openCodeOpenAIOptions = {
-  store: false,
-  reasoningSummary: 'auto',
-  include: openCodeReasoningInclude
+  store: false
 }
 
 const openCodeOpenAIVariantOptions: Record<string, Record<string, unknown>> = {
   low: {
-    reasoningEffort: 'low',
-    reasoningSummary: 'auto',
-    include: openCodeReasoningInclude
+    reasoningEffort: 'low'
   },
   medium: {
-    reasoningEffort: 'medium',
-    reasoningSummary: 'auto',
-    include: openCodeReasoningInclude
+    reasoningEffort: 'medium'
   },
   high: {
-    reasoningEffort: 'high',
-    reasoningSummary: 'auto',
-    include: openCodeReasoningInclude
+    reasoningEffort: 'high'
   },
   xhigh: {
-    reasoningEffort: 'xhigh',
-    reasoningSummary: 'auto',
-    include: openCodeReasoningInclude
+    reasoningEffort: 'xhigh'
   }
 }
 
@@ -753,7 +741,7 @@ function applyOpenCodeClaudeCapabilities(models: Record<string, any>) {
   return models
 }
 
-function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: string, pathLabel?: string): FileConfig {
+function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: string, pathLabel?: string, includeAnthropicProvider = false): FileConfig {
   const provider: Record<string, any> = {}
   const addProvider = (providerID: string, optionsBaseUrl = baseUrl) => {
     provider[providerID] = {
@@ -1272,9 +1260,11 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].models = antigravityGeminiModels
   } else if (platform === 'openai') {
     provider[platform].models = configuredOpenAIModels
-    const anthropicProvider = addProvider('anthropic')
-    anthropicProvider.npm = '@ai-sdk/anthropic'
-    anthropicProvider.models = configuredClaudeModels
+    if (includeAnthropicProvider) {
+      const anthropicProvider = addProvider('anthropic')
+      anthropicProvider.npm = '@ai-sdk/anthropic'
+      anthropicProvider.models = configuredClaudeModels
+    }
   } else if (platform === 'windsurf') {
     const openaiProvider = addProvider('openai')
     openaiProvider.models = configuredOpenAIModels
