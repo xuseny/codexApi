@@ -79,6 +79,15 @@
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
       <button
+        v-if="props.enableApiModelLoad && props.accountId"
+        type="button"
+        @click="loadModelsFromAPI"
+        :disabled="loadingApiModels"
+        class="rounded-lg border border-cyan-200 px-3 py-1.5 text-sm text-cyan-600 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-cyan-800 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
+      >
+        {{ loadingApiModels ? t('admin.accounts.loadingModels') : t('admin.accounts.loadModelsFromApi') }}
+      </button>
+      <button
         type="button"
         @click="fillRelated"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -122,6 +131,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getAvailableModels } from '@/api/admin/accounts'
 import { useAppStore } from '@/stores/app'
 import ModelIcon from '@/components/common/ModelIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -133,6 +143,8 @@ const props = defineProps<{
   modelValue: string[]
   platform?: string
   platforms?: string[]
+  accountId?: number
+  enableApiModelLoad?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -145,6 +157,8 @@ const showDropdown = ref(false)
 const searchQuery = ref('')
 const customModel = ref('')
 const isComposing = ref(false)
+const loadingApiModels = ref(false)
+const apiModelOptions = ref<Array<{ value: string; label: string }>>([])
 const normalizedPlatforms = computed(() => {
   const rawPlatforms =
     props.platforms && props.platforms.length > 0
@@ -163,18 +177,40 @@ const normalizedPlatforms = computed(() => {
 })
 
 const availableOptions = computed(() => {
-  if (normalizedPlatforms.value.length === 0) {
-    return allModels
+  const options = new Map<string, { value: string; label: string }>()
+  const addOption = (model: { value: string; label: string }) => {
+    if (!model.value || options.has(model.value)) return
+    options.set(model.value, model)
   }
 
-  const allowedModels = new Set<string>()
-  for (const platform of normalizedPlatforms.value) {
-    for (const model of getModelsByPlatform(platform)) {
-      allowedModels.add(model)
+  if (normalizedPlatforms.value.length === 0) {
+    for (const model of allModels) {
+      addOption(model)
+    }
+  } else {
+    const allowedModels = new Set<string>()
+    for (const platform of normalizedPlatforms.value) {
+      for (const model of getModelsByPlatform(platform)) {
+        allowedModels.add(model)
+      }
+    }
+
+    for (const model of allModels) {
+      if (allowedModels.has(model.value)) {
+        addOption(model)
+      }
     }
   }
 
-  return allModels.filter(model => allowedModels.has(model.value))
+  for (const model of apiModelOptions.value) {
+    addOption(model)
+  }
+
+  for (const model of props.modelValue) {
+    addOption({ value: model, label: model })
+  }
+
+  return Array.from(options.values())
 })
 
 const filteredModels = computed(() => {
@@ -217,13 +253,37 @@ const handleEnter = () => {
   if (!isComposing.value) addCustom()
 }
 
+const loadModelsFromAPI = async () => {
+  if (!props.accountId || loadingApiModels.value) return
+  loadingApiModels.value = true
+  try {
+    const models = await getAvailableModels(props.accountId, { source: 'catalog' })
+    const nextOptions: Array<{ value: string; label: string }> = []
+    const seen = new Set<string>()
+    for (const model of models) {
+      const value = String(model.id || '').trim()
+      if (!value || seen.has(value)) continue
+      seen.add(value)
+      nextOptions.push({
+        value,
+        label: model.display_name || value
+      })
+    }
+    apiModelOptions.value = nextOptions
+    appStore.showInfo(t('admin.accounts.loadedModelsFromApi', { count: nextOptions.length }))
+  } catch (error) {
+    console.error('Failed to load account models:', error)
+    appStore.showError(t('admin.accounts.failedToLoadModels'))
+  } finally {
+    loadingApiModels.value = false
+  }
+}
+
 const fillRelated = () => {
   const newModels = [...props.modelValue]
-  for (const platform of normalizedPlatforms.value) {
-    for (const model of getModelsByPlatform(platform)) {
-      if (!newModels.includes(model)) {
-        newModels.push(model)
-      }
+  for (const option of availableOptions.value) {
+    if (!newModels.includes(option.value)) {
+      newModels.push(option.value)
     }
   }
   emit('update:modelValue', newModels)

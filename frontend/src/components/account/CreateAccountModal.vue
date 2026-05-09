@@ -2840,6 +2840,7 @@
           v-model="form.group_ids"
           :groups="groups"
           :platform="form.platform"
+          :platforms="selectableGroupPlatforms"
           :mixed-scheduling="mixedScheduling"
           data-tour="account-form-groups"
         />
@@ -3318,6 +3319,7 @@ import type {
   Proxy,
   AdminGroup,
   AccountPlatform,
+  GroupPlatform,
   AccountType,
   CheckMixedChannelResponse,
   CreateAccountRequest,
@@ -3513,6 +3515,7 @@ adminAPI.settings.getWebSearchEmulationConfig().then(cfg => {
 loadQuotaNotifyGlobal()
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
+const windsurfAssignableGroupPlatforms: GroupPlatform[] = ['windsurf', 'openai', 'anthropic']
 const antigravityAccountType = ref<'oauth' | 'upstream'>('oauth') // For antigravity: oauth or upstream
 const upstreamBaseUrl = ref('') // For upstream type: base URL
 const upstreamApiKey = ref('') // For upstream type: API key
@@ -3705,6 +3708,13 @@ const form = reactive({
   rate_multiplier: 1,
   group_ids: [] as number[],
   expires_at: null as number | null
+})
+
+const selectableGroupPlatforms = computed<GroupPlatform[] | undefined>(() => {
+  if (form.platform === 'windsurf') {
+    return windsurfAssignableGroupPlatforms
+  }
+  return undefined
 })
 
 const isKiroOAuthFlow = computed(() => form.platform === 'kiro' && accountCategory.value === 'oauth-based')

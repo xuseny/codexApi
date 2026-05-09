@@ -915,7 +915,6 @@ func (h *AccountHandler) Refresh(c *gin.Context) {
 		response.NotFound(c, "Account not found")
 		return
 	}
-
 	updatedAccount, warning, err := h.refreshSingleAccount(c.Request.Context(), account)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -1800,6 +1799,8 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		response.NotFound(c, "Account not found")
 		return
 	}
+	modelSource := strings.ToLower(strings.TrimSpace(c.Query("source")))
+	useCatalogSource := modelSource == "catalog" || modelSource == "default" || c.Query("include_default") == "true"
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
@@ -1842,6 +1843,11 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	// Handle Windsurf account pools. Windsurf has its own multi-provider model
 	// catalog, not the OpenAI default model list.
 	if account.IsWindsurf() {
+		if useCatalogSource {
+			response.Success(c, service.DefaultWindsurfModels())
+			return
+		}
+
 		mapping := account.GetModelMapping()
 		if len(mapping) == 0 {
 			response.Success(c, service.DefaultWindsurfModels())

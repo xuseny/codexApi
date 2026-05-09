@@ -144,3 +144,45 @@ func TestAccountHandlerGetAvailableModels_WindsurfUsesWindsurfCatalog(t *testing
 	require.Equal(t, "anthropic", ids["claude-sonnet-4.6"])
 	require.Empty(t, ids["gpt-5.4"], "Windsurf catalog exposes concrete effort variants, not OpenAI default aliases")
 }
+
+func TestAccountHandlerGetAvailableModels_WindsurfCatalogSourceIgnoresMapping(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID:       45,
+			Name:     "windsurf-oauth-mapped",
+			Platform: service.PlatformWindsurf,
+			Type:     service.AccountTypeOAuth,
+			Status:   service.StatusActive,
+			Credentials: map[string]any{
+				"windsurf_builtin": true,
+				"model_mapping": map[string]any{
+					"gpt-5.5": "gpt-5.5",
+				},
+			},
+		},
+	}
+	router := setupAvailableModelsRouter(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/45/models?source=catalog", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Greater(t, len(resp.Data), 1)
+
+	ids := make(map[string]struct{}, len(resp.Data))
+	for _, model := range resp.Data {
+		ids[model.ID] = struct{}{}
+	}
+	require.Contains(t, ids, "gpt-5.5")
+	require.Contains(t, ids, "gemini-2.5-flash")
+	require.Contains(t, ids, "claude-sonnet-4.6")
+}
