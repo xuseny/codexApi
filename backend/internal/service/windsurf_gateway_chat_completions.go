@@ -1195,6 +1195,11 @@ func windsurfBuildToolInstruction(tools []apicompat.ChatTool, toolChoice json.Ra
 			b.WriteString("Parameters: ")
 			b.WriteString(params)
 			b.WriteByte('\n')
+			if required := windsurfToolRequiredParameters(tool.Function.Parameters); len(required) > 0 {
+				b.WriteString("Required parameters: ")
+				b.WriteString(strings.Join(required, ", "))
+				b.WriteByte('\n')
+			}
 		}
 	}
 	return b.String()
@@ -1357,7 +1362,7 @@ func windsurfParseToolCallsFromText(text string, tools []apicompat.ChatTool) ([]
 		*calls = append(*calls, windsurfParsedToolCall{
 			ID:        id,
 			Name:      name,
-			Arguments: windsurfToolArgumentsJSON(c.Arguments),
+			Arguments: windsurfNormalizeToolCallArguments(name, windsurfToolArgumentsJSON(c.Arguments), tools),
 		})
 		return true
 	}
@@ -1548,6 +1553,92 @@ func windsurfToolArgumentsJSON(value any) string {
 		}
 		return string(buf)
 	}
+}
+
+func windsurfNormalizeToolCallArguments(name string, raw string, tools []apicompat.ChatTool) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "{}"
+	}
+	if !windsurfToolRequiresParameter(tools, name, "description") {
+		return raw
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj == nil {
+		return raw
+	}
+	if value, ok := obj["description"]; ok {
+		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+			return raw
+		}
+	}
+	obj["description"] = windsurfToolDescriptionFallback(name, obj)
+	buf, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return string(buf)
+}
+
+func windsurfToolRequiresParameter(tools []apicompat.ChatTool, name string, parameter string) bool {
+	parameter = strings.TrimSpace(parameter)
+	if parameter == "" {
+		return false
+	}
+	for _, tool := range tools {
+		if tool.Type != "function" || tool.Function == nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(tool.Function.Name), strings.TrimSpace(name)) {
+			continue
+		}
+		for _, required := range windsurfToolRequiredParameters(tool.Function.Parameters) {
+			if required == parameter {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func windsurfToolRequiredParameters(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var schema struct {
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil
+	}
+	required := make([]string, 0, len(schema.Required))
+	for _, name := range schema.Required {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			required = append(required, name)
+		}
+	}
+	return required
+}
+
+func windsurfToolDescriptionFallback(name string, args map[string]any) string {
+	for _, key := range []string{"description", "command", "cmd", "query", "path", "file_path"} {
+		value, _ := args[key].(string)
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		value = strings.Join(strings.Fields(value), " ")
+		if len(value) > 120 {
+			return value[:120]
+		}
+		return value
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Tool call"
+	}
+	return "Call " + name
 }
 
 func windsurfFindBalancedJSONEnd(s string, start int) int {

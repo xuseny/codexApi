@@ -141,6 +141,23 @@ func TestWindsurfParseToolCallsFromText_GPTNative(t *testing.T) {
 	require.JSONEq(t, `{"file_path":"README.md"}`, calls[0].Arguments)
 }
 
+func TestWindsurfParseToolCallsAddsRequiredDescription(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name:       "bash",
+			Parameters: json.RawMessage(`{"type":"object","required":["command","description"],"properties":{"command":{"type":"string"},"description":{"type":"string"}}}`),
+		},
+	}}
+
+	calls, cleaned := windsurfParseToolCallsFromText(`{"function_call":{"name":"bash","arguments":{"command":"pwd && ls"}}}`, tools)
+
+	require.Empty(t, cleaned)
+	require.Len(t, calls, 1)
+	require.Equal(t, "bash", calls[0].Name)
+	require.JSONEq(t, `{"command":"pwd && ls","description":"pwd && ls"}`, calls[0].Arguments)
+}
+
 func TestWindsurfParseToolCallsDetailedPreservesPrefixText(t *testing.T) {
 	tools := []apicompat.ChatTool{{
 		Type: "function",
