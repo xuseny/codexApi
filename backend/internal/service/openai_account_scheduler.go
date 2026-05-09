@@ -60,11 +60,36 @@ func normalizeOpenAICompatiblePlatform(platform string) string {
 	}
 }
 
+func openAICompatibleQueryPlatforms(platform string) []string {
+	switch normalizeOpenAICompatiblePlatform(platform) {
+	case PlatformOpenAI:
+		return []string{PlatformOpenAI, PlatformWindsurf}
+	case PlatformWindsurf:
+		return []string{PlatformWindsurf}
+	case PlatformKiro:
+		return []string{PlatformKiro}
+	default:
+		return []string{PlatformOpenAI}
+	}
+}
+
 func isOpenAICompatibleAccountForPlatform(account *Account, platform string) bool {
 	if account == nil {
 		return false
 	}
-	return account.Platform == normalizeOpenAICompatiblePlatform(platform) && account.IsOpenAICompatible()
+	if !account.IsOpenAICompatible() {
+		return false
+	}
+	switch normalizeOpenAICompatiblePlatform(platform) {
+	case PlatformOpenAI:
+		return account.Platform == PlatformOpenAI || account.Platform == PlatformWindsurf
+	case PlatformWindsurf:
+		return account.Platform == PlatformWindsurf
+	case PlatformKiro:
+		return account.Platform == PlatformKiro
+	default:
+		return account.Platform == PlatformOpenAI
+	}
 }
 
 type OpenAIAccountScheduleDecision struct {

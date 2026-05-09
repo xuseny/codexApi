@@ -473,6 +473,11 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 			firstErr = err
 		}
 	}
+	if account.Platform == PlatformWindsurf {
+		if err := s.rebuildBucketsForPlatform(ctx, PlatformOpenAI, groupIDs, reason, seen); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -661,6 +666,19 @@ func (s *SchedulerSnapshotService) loadAccountsFromDB(ctx context.Context, bucke
 			filtered = append(filtered, acc)
 		}
 		return filtered, nil
+	}
+
+	if bucket.Platform == PlatformOpenAI && bucket.Mode != SchedulerModeForced {
+		platforms := openAICompatibleQueryPlatforms(bucket.Platform)
+		if len(platforms) > 1 {
+			if groupID > 0 {
+				return s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, platforms)
+			}
+			if s.isRunModeSimple() {
+				return s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+			}
+			return s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
+		}
 	}
 
 	if groupID > 0 {

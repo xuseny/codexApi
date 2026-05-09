@@ -43,6 +43,10 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx 
 	return result, nil
 }
 
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	return r.listSchedulableByPlatforms(platforms), nil
+}
+
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
@@ -53,8 +57,30 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Co
 	return result, nil
 }
 
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listSchedulableByPlatforms(platforms), nil
+}
+
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listSchedulableByPlatforms(platforms), nil
+}
+
+func (r schedulerTestOpenAIAccountRepo) listSchedulableByPlatforms(platforms []string) []Account {
+	allowed := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		allowed[platform] = struct{}{}
+	}
+	var result []Account
+	for _, acc := range r.accounts {
+		if _, ok := allowed[acc.Platform]; ok {
+			result = append(result, acc)
+		}
+	}
+	return result
 }
 
 type schedulerTestConcurrencyCache struct {
@@ -352,6 +378,53 @@ func TestOpenAIGatewayService_SelectAccountWithSchedulerForPlatform_WindsurfUses
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
 	require.Equal(t, int64(37002), selection.Account.ID)
+	require.Equal(t, PlatformWindsurf, selection.Account.Platform)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithSchedulerForPlatform_OpenAICanUseWindsurfOAuthPool(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10108)
+	accounts := []Account{
+		{
+			ID:          37003,
+			Platform:    PlatformWindsurf,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Credentials: map[string]any{
+				"email": "windsurf@example.com",
+			},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              &schedulerTestGatewayCache{},
+		cfg:                cfg,
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithSchedulerForPlatform(
+		ctx,
+		PlatformOpenAI,
+		&groupID,
+		"",
+		"openai_group_windsurf_session",
+		"gemini-2.5-flash",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(37003), selection.Account.ID)
 	require.Equal(t, PlatformWindsurf, selection.Account.Platform)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }

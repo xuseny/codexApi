@@ -1111,7 +1111,7 @@ func (a *Account) GetOpenAISessionID() string {
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
 	if a.IsWindsurf() || a.IsKiro() {
-		return capability == "" && a.Type == AccountTypeAPIKey
+		return capability == ""
 	}
 	if !a.IsOpenAI() {
 		return false

@@ -1813,6 +1813,20 @@ func (s *OpenAIGatewayService) listSchedulableAccountsForPlatform(ctx context.Co
 	}
 	var accounts []Account
 	var err error
+	platforms := openAICompatibleQueryPlatforms(platform)
+	if len(platforms) > 1 {
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		} else if groupID != nil {
+			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+		} else {
+			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("query accounts failed: %w", err)
+		}
+		return accounts, nil
+	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
 	} else if groupID != nil {
