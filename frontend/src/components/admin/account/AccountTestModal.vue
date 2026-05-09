@@ -334,7 +334,10 @@ const loadAvailableModels = async () => {
       : models
     // Default selection by platform
     if (availableModels.value.length > 0) {
-      if (props.account.platform === 'gemini') {
+      if (props.account.platform === 'windsurf') {
+        const safeDefault = availableModels.value.find((m) => m.id === 'gemini-2.5-flash')
+        selectedModelId.value = safeDefault?.id || availableModels.value[0].id
+      } else if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model

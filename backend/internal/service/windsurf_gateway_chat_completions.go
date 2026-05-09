@@ -20,8 +20,11 @@ import (
 )
 
 type windsurfModelInfo struct {
-	Name      string
-	EnumValue int
+	Name       string
+	EnumValue  int
+	ModelUID   string
+	Provider   string
+	Deprecated bool
 }
 
 type windsurfRawMessage struct {
@@ -29,39 +32,7 @@ type windsurfRawMessage struct {
 	Content string
 }
 
-var windsurfRawModels = map[string]windsurfModelInfo{
-	"gpt-4o":                     {Name: "gpt-4o", EnumValue: 109},
-	"gpt-4.1":                    {Name: "gpt-4.1", EnumValue: 259},
-	"gpt-5":                      {Name: "gpt-5", EnumValue: 340},
-	"gpt-5-codex":                {Name: "gpt-5-codex", EnumValue: 346},
-	"gpt-5.2":                    {Name: "gpt-5.2", EnumValue: 401},
-	"gpt-5.2-low":                {Name: "gpt-5.2-low", EnumValue: 400},
-	"gpt-5.2-high":               {Name: "gpt-5.2-high", EnumValue: 402},
-	"gpt-5.2-xhigh":              {Name: "gpt-5.2-xhigh", EnumValue: 403},
-	"claude-4-sonnet":            {Name: "claude-4-sonnet", EnumValue: 281},
-	"claude-4-sonnet-thinking":   {Name: "claude-4-sonnet-thinking", EnumValue: 282},
-	"claude-4-opus":              {Name: "claude-4-opus", EnumValue: 290},
-	"claude-4-opus-thinking":     {Name: "claude-4-opus-thinking", EnumValue: 291},
-	"claude-4.1-opus":            {Name: "claude-4.1-opus", EnumValue: 328},
-	"claude-4.1-opus-thinking":   {Name: "claude-4.1-opus-thinking", EnumValue: 329},
-	"claude-4.5-sonnet":          {Name: "claude-4.5-sonnet", EnumValue: 353},
-	"claude-4.5-sonnet-thinking": {Name: "claude-4.5-sonnet-thinking", EnumValue: 354},
-	"claude-4.5-opus":            {Name: "claude-4.5-opus", EnumValue: 391},
-	"claude-4.5-opus-thinking":   {Name: "claude-4.5-opus-thinking", EnumValue: 392},
-	"gemini-2.5-pro":             {Name: "gemini-2.5-pro", EnumValue: 246},
-	"gemini-2.5-flash":           {Name: "gemini-2.5-flash", EnumValue: 312},
-	"gemini-3.0-pro":             {Name: "gemini-3.0-pro", EnumValue: 412},
-	"gemini-3.0-flash":           {Name: "gemini-3.0-flash", EnumValue: 415},
-	"o3":                         {Name: "o3", EnumValue: 218},
-	"o4-mini":                    {Name: "o4-mini", EnumValue: 264},
-	"grok-3":                     {Name: "grok-3", EnumValue: 217},
-	"deepseek-r1":                {Name: "deepseek-r1", EnumValue: 206},
-	"swe-1.5":                    {Name: "swe-1.5", EnumValue: 377},
-	"swe-1.5-fast":               {Name: "swe-1.5-fast", EnumValue: 359},
-	"swe-1.5-thinking":           {Name: "swe-1.5-thinking", EnumValue: 369},
-	"swe-1.6":                    {Name: "swe-1.6", EnumValue: 420},
-	"swe-1.6-fast":               {Name: "swe-1.6-fast", EnumValue: 421},
-}
+var windsurfRawModels = buildWindsurfModelLookup()
 
 func (s *OpenAIGatewayService) ForwardWindsurfChatCompletions(
 	ctx context.Context,
@@ -85,7 +56,7 @@ func (s *OpenAIGatewayService) ForwardWindsurfChatCompletions(
 	}
 	originalModel := chatReq.Model
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
-	modelInfo, upstreamModel, err := resolveWindsurfRawModel(billingModel, originalModel)
+	modelInfo, upstreamModel, err := resolveWindsurfModel(billingModel, originalModel)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +68,9 @@ func (s *OpenAIGatewayService) ForwardWindsurfChatCompletions(
 	apiKey, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		return nil, fmt.Errorf("get windsurf api key: %w", err)
+	}
+	if strings.TrimSpace(modelInfo.ModelUID) != "" {
+		return s.forwardWindsurfCascadeChatCompletions(ctx, c, account, body, chatReq, messages, modelInfo, originalModel, billingModel, upstreamModel, apiKey, startTime)
 	}
 	sessionID := ""
 	if trimmed := strings.TrimSpace(promptCacheKey); trimmed != "" {
@@ -185,6 +159,10 @@ func (s *OpenAIGatewayService) ForwardWindsurfChatCompletions(
 }
 
 func (s *OpenAIGatewayService) buildWindsurfRawRequest(ctx context.Context, account *Account, protoBody []byte) (*http.Request, *windsurfLSEntry, error) {
+	return buildWindsurfGRPCRequest(ctx, account, windsurfRawGetChatMessagePath, protoBody)
+}
+
+func buildWindsurfGRPCRequest(ctx context.Context, account *Account, path string, protoBody []byte) (*http.Request, *windsurfLSEntry, error) {
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
@@ -193,7 +171,7 @@ func (s *OpenAIGatewayService) buildWindsurfRawRequest(ctx context.Context, acco
 	if err != nil {
 		return nil, nil, err
 	}
-	target := fmt.Sprintf("http://127.0.0.1:%d%s", entry.port, windsurfRawGetChatMessagePath)
+	target := fmt.Sprintf("http://127.0.0.1:%d%s", entry.port, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(windsurfWrapGRPCFrame(protoBody)))
 	if err != nil {
 		return nil, nil, err
@@ -234,17 +212,20 @@ func buildWindsurfRawMessages(req apicompat.ChatCompletionsRequest) []windsurfRa
 	return messages
 }
 
-func resolveWindsurfRawModel(candidates ...string) (windsurfModelInfo, string, error) {
+func resolveWindsurfModel(candidates ...string) (windsurfModelInfo, string, error) {
 	for _, candidate := range candidates {
 		normalized := strings.ToLower(strings.TrimSpace(candidate))
 		if normalized == "" {
 			continue
 		}
+		if alias := windsurfModelAliases[normalized]; alias != "" {
+			normalized = alias
+		}
 		if info, ok := windsurfRawModels[normalized]; ok {
 			return info, normalized, nil
 		}
 	}
-	return windsurfModelInfo{}, "", fmt.Errorf("windsurf builtin RawGetChatMessage does not support model %q yet; configure model_mapping to a supported enum model or use an upstream WindsurfAPI base_url for Cascade models", firstNonEmpty(candidates...))
+	return windsurfModelInfo{}, "", fmt.Errorf("windsurf builtin does not support model %q; choose a model from the Windsurf model list or configure model_mapping", firstNonEmpty(candidates...))
 }
 
 func (s *OpenAIGatewayService) writeWindsurfStreamingChatResponse(ctx context.Context, c *gin.Context, reader io.Reader, originalModel, upstreamModel string, start time.Time) (OpenAIUsage, *int, error) {

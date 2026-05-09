@@ -186,6 +186,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
+	if account.IsWindsurf() {
+		return s.testWindsurfAccountConnection(c, account, modelID, prompt)
+	}
+
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -586,6 +590,72 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
+}
+
+// testWindsurfAccountConnection tests a Windsurf account pool account.
+func (s *AccountTestService) testWindsurfAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	ctx := c.Request.Context()
+
+	if account.Type != AccountTypeOAuth || !account.GetCredentialBool("windsurf_builtin") {
+		return s.testOpenAIAccountConnection(c, account, modelID, prompt, AccountTestModeDefault)
+	}
+
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = windsurfDefaultTestModel
+	}
+	testModelID = account.GetMappedModel(testModelID)
+	modelInfo, upstreamModel, err := resolveWindsurfModel(testModelID)
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+
+	apiKey := strings.TrimSpace(firstNonEmpty(account.GetCredential("api_key"), account.GetCredential("session_token")))
+	if apiKey == "" {
+		return s.sendErrorAndEnd(c, "No Windsurf API key available")
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: upstreamModel})
+
+	textPrompt := strings.TrimSpace(prompt)
+	if textPrompt == "" {
+		textPrompt = defaultGeminiTextTestPrompt
+	}
+	messages := []windsurfRawMessage{{Role: "user", Content: textPrompt}}
+
+	if strings.TrimSpace(modelInfo.ModelUID) != "" {
+		_, _, err := runWindsurfCascadeChat(ctx, account, apiKey, messages, modelInfo, func(delta string) error {
+			s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+			return nil
+		})
+		if err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
+
+	protoBody := windsurfBuildRawGetChatMessageRequest(apiKey, messages, modelInfo.EnumValue, modelInfo.Name, uuid.NewString())
+	req, _, err := buildWindsurfGRPCRequest(ctx, account, windsurfRawGetChatMessagePath, protoBody)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build Windsurf request: %s", err.Error()))
+	}
+	resp, err := newWindsurfGRPCClient().Do(req)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf language server request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf language server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+	}
+	return s.processWindsurfRawStream(c, resp.Body)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1243,6 +1313,38 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 				}
 			}
 			return s.sendErrorAndEnd(c, errorMsg)
+		}
+	}
+}
+
+func (s *AccountTestService) processWindsurfRawStream(c *gin.Context, body io.Reader) error {
+	buffer := make([]byte, 0, 32*1024)
+	tmp := make([]byte, 32*1024)
+	for {
+		n, readErr := body.Read(tmp)
+		if n > 0 {
+			buffer = append(buffer, tmp[:n]...)
+			var frames [][]byte
+			frames, buffer = windsurfDrainGRPCFrames(buffer)
+			for _, frame := range frames {
+				text, _, isErr, err := windsurfParseRawResponse(frame)
+				if err != nil {
+					return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf response parse error: %s", err.Error()))
+				}
+				if isErr {
+					return s.sendErrorAndEnd(c, "Windsurf upstream returned error frame")
+				}
+				if text != "" {
+					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+				return nil
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf stream read error: %s", readErr.Error()))
 		}
 	}
 }
