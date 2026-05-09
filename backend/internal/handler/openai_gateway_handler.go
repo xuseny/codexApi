@@ -171,6 +171,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		zap.Int64("api_key_id", apiKey.ID),
 		zap.Any("group_id", apiKey.GroupID),
 	)
+	clientProfile := bindClientProfile(c, service.WireProtocolOpenAIResponses)
+	reqLog = reqLog.With(
+		zap.String("client_profile", clientProfile.ID),
+		zap.String("wire_protocol", clientProfile.WireProtocol),
+	)
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
@@ -591,6 +596,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		zap.Int64("user_id", subject.UserID),
 		zap.Int64("api_key_id", apiKey.ID),
 		zap.Any("group_id", apiKey.GroupID),
+	)
+	clientProfile := bindClientProfile(c, service.WireProtocolAnthropicMessages)
+	reqLog = reqLog.With(
+		zap.String("client_profile", clientProfile.ID),
+		zap.String("wire_protocol", clientProfile.WireProtocol),
 	)
 
 	if !h.ensureResponsesDependencies(c, reqLog) {

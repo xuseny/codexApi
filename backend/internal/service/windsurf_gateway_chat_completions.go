@@ -359,13 +359,29 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	}
 
 	var toolCalls []windsurfParsedToolCall
+	cleanedToolText := ""
 	if toolsEnabled {
-		toolCalls, _ = windsurfParseToolCallsFromText(text, chatReq.Tools)
+		var parseStatus string
+		toolCalls, cleanedToolText, parseStatus = windsurfParseToolCallsDetailedFromText(text, chatReq.Tools)
+		logger.L().Debug("windsurf.tool_bridge_parse",
+			zap.Int64("account_id", account.ID),
+			zap.String("model", originalModel),
+			zap.String("status", parseStatus),
+			zap.Int("tool_call_count", len(toolCalls)),
+			zap.Int("raw_text_len", len(text)),
+			zap.Int("cleaned_text_len", len(cleanedToolText)),
+		)
+	}
+	if len(toolCalls) > 0 && strings.TrimSpace(cleanedToolText) != "" {
+		contentBuilder.WriteString(cleanedToolText)
 	}
 	if callbacks.OnText == nil && len(toolCalls) == 0 {
 		contentBuilder.WriteString(text)
 	}
 	fullText := contentBuilder.String()
+	if strings.TrimSpace(fullText) == "" && len(toolCalls) == 0 && toolsEnabled {
+		fullText = windsurfToolBridgeEmptyFallbackText(chatReq.ToolChoice)
+	}
 	reasoningText := reasoningBuilder.String()
 
 	if !responsesReq.Stream {
@@ -376,6 +392,22 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	} else if c != nil {
 		if toolsEnabled && len(toolCalls) > 0 {
 			markFirstToken()
+			if strings.TrimSpace(fullText) != "" {
+				if err := ensureMessageItem(); err != nil {
+					return nil, err
+				}
+				if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+					Type:           "response.output_text.delta",
+					SequenceNumber: sequence,
+					OutputIndex:    messageIndex,
+					ContentIndex:   0,
+					Delta:          fullText,
+					ItemID:         itemID,
+				}); err != nil {
+					return nil, err
+				}
+				sequence++
+			}
 			if err := windsurfWriteResponsesToolCallEvents(c, toolCalls, &sequence, &nextOutputIndex); err != nil {
 				return nil, err
 			}
@@ -687,13 +719,29 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 	}
 
 	var toolCalls []windsurfParsedToolCall
+	cleanedToolText := ""
 	if toolsEnabled {
-		toolCalls, _ = windsurfParseToolCallsFromText(text, chatReq.Tools)
+		var parseStatus string
+		toolCalls, cleanedToolText, parseStatus = windsurfParseToolCallsDetailedFromText(text, chatReq.Tools)
+		logger.L().Debug("windsurf.tool_bridge_parse",
+			zap.Int64("account_id", account.ID),
+			zap.String("model", originalModel),
+			zap.String("status", parseStatus),
+			zap.Int("tool_call_count", len(toolCalls)),
+			zap.Int("raw_text_len", len(text)),
+			zap.Int("cleaned_text_len", len(cleanedToolText)),
+		)
+	}
+	if len(toolCalls) > 0 && strings.TrimSpace(cleanedToolText) != "" {
+		textBuilder.WriteString(cleanedToolText)
 	}
 	if callbacks.OnText == nil && len(toolCalls) == 0 {
 		textBuilder.WriteString(text)
 	}
 	fullText := textBuilder.String()
+	if strings.TrimSpace(fullText) == "" && len(toolCalls) == 0 && toolsEnabled {
+		fullText = windsurfToolBridgeEmptyFallbackText(chatReq.ToolChoice)
+	}
 	thinkingText := thinkingBuilder.String()
 	stopReason := "end_turn"
 	if len(toolCalls) > 0 {
@@ -707,6 +755,22 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 	} else if c != nil {
 		if len(toolCalls) > 0 {
 			markFirstToken()
+			if strings.TrimSpace(fullText) != "" {
+				if err := ensureBlock("text"); err != nil {
+					return nil, err
+				}
+				idx := blockIndex
+				if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+					Type:  "content_block_delta",
+					Index: &idx,
+					Delta: &apicompat.AnthropicDelta{
+						Type: "text_delta",
+						Text: fullText,
+					},
+				}); err != nil {
+					return nil, err
+				}
+			}
 			if err := closeBlock(); err != nil {
 				return nil, err
 			}
@@ -1305,6 +1369,38 @@ func windsurfParseToolCallsFromText(text string, tools []apicompat.ChatTool) ([]
 		return nil, text
 	}
 	return calls, strings.TrimSpace(cleaned)
+}
+
+func windsurfParseToolCallsDetailedFromText(text string, tools []apicompat.ChatTool) ([]windsurfParsedToolCall, string, string) {
+	calls, cleaned := windsurfParseToolCallsFromText(text, tools)
+	switch {
+	case len(calls) > 0:
+		return calls, cleaned, "parsed"
+	case windsurfLooksLikeToolCallText(text):
+		return nil, text, "unparsed_tool_marker"
+	case strings.TrimSpace(text) == "":
+		return nil, text, "empty_response"
+	default:
+		return nil, text, "no_tool_call"
+	}
+}
+
+func windsurfLooksLikeToolCallText(text string) bool {
+	normalized := strings.ToLower(text)
+	return strings.Contains(normalized, "<tool_call") ||
+		strings.Contains(normalized, "function_call") ||
+		strings.Contains(normalized, "tool_calls")
+}
+
+func windsurfToolBridgeEmptyFallbackText(toolChoice json.RawMessage) string {
+	mode, forceName := windsurfResolveToolChoice(toolChoice)
+	if mode == "required" {
+		if forceName != "" {
+			return fmt.Sprintf("The upstream model returned no valid %s tool call. Please retry this request.", forceName)
+		}
+		return "The upstream model returned no valid tool call. Please retry this request."
+	}
+	return "The upstream model returned an empty response. Please retry this request."
 }
 
 func windsurfParseXMLToolCalls(text string, add func(windsurfToolCallCandidate, *[]windsurfParsedToolCall) bool, calls *[]windsurfParsedToolCall) string {

@@ -68,6 +68,7 @@ func RegisterGatewayRoutes(
 			h.Gateway.CountTokens(c)
 		})
 		gateway.GET("/models", h.Gateway.Models)
+		gateway.GET("/capabilities", h.Gateway.Capabilities)
 		gateway.GET("/usage", h.Gateway.Usage)
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
@@ -216,6 +217,7 @@ func RegisterGatewayRoutes(
 		antigravityV1.POST("/messages", h.Gateway.Messages)
 		antigravityV1.POST("/messages/count_tokens", h.Gateway.CountTokens)
 		antigravityV1.GET("/models", h.Gateway.AntigravityModels)
+		antigravityV1.GET("/capabilities", h.Gateway.Capabilities)
 		antigravityV1.GET("/usage", h.Gateway.Usage)
 	}
 

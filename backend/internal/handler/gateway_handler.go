@@ -129,6 +129,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		zap.Int64("api_key_id", apiKey.ID),
 		zap.Any("group_id", apiKey.GroupID),
 	)
+	clientProfile := bindClientProfile(c, service.WireProtocolAnthropicMessages)
+	reqLog = reqLog.With(
+		zap.String("client_profile", clientProfile.ID),
+		zap.String("wire_protocol", clientProfile.WireProtocol),
+	)
 	defer h.maybeLogCompatibilityFallbackMetrics(reqLog)
 
 	// 读取请求体
@@ -928,6 +933,24 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		"object": "list",
 		"data":   claude.DefaultModels,
 	})
+}
+
+// Capabilities returns the client dialect and model capability snapshot for the current key.
+// GET /v1/capabilities
+func (h *GatewayHandler) Capabilities(c *gin.Context) {
+	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
+
+	platform := ""
+	allowMessagesDispatch := false
+	if apiKey != nil && apiKey.Group != nil {
+		platform = apiKey.Group.Platform
+		allowMessagesDispatch = apiKey.Group.AllowMessagesDispatch
+	}
+	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
+		platform = forcedPlatform
+	}
+
+	c.JSON(http.StatusOK, service.BuildClientCapabilitySnapshot(platform, allowMessagesDispatch))
 }
 
 // AntigravityModels 返回 Antigravity 支持的全部模型

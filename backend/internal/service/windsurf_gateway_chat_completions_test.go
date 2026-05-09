@@ -141,6 +141,56 @@ func TestWindsurfParseToolCallsFromText_GPTNative(t *testing.T) {
 	require.JSONEq(t, `{"file_path":"README.md"}`, calls[0].Arguments)
 }
 
+func TestWindsurfParseToolCallsDetailedPreservesPrefixText(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name: "Read",
+		},
+	}}
+
+	calls, cleaned, status := windsurfParseToolCallsDetailedFromText(
+		"我先读取文件。\n<tool_call>{\"name\":\"Read\",\"arguments\":{\"file_path\":\"README.md\"}}</tool_call>",
+		tools,
+	)
+
+	require.Equal(t, "parsed", status)
+	require.Equal(t, "我先读取文件。", cleaned)
+	require.Len(t, calls, 1)
+	require.Equal(t, "Read", calls[0].Name)
+}
+
+func TestWindsurfParseToolCallsDetailedReportsUnparsedMarker(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name: "Read",
+		},
+	}}
+
+	calls, cleaned, status := windsurfParseToolCallsDetailedFromText(
+		`{"function_call":{"name":"Unknown","arguments":{}}}`,
+		tools,
+	)
+
+	require.Equal(t, "unparsed_tool_marker", status)
+	require.Empty(t, calls)
+	require.Contains(t, cleaned, "function_call")
+}
+
+func TestWindsurfToolBridgeEmptyFallbackText(t *testing.T) {
+	require.Equal(
+		t,
+		"The upstream model returned no valid Read tool call. Please retry this request.",
+		windsurfToolBridgeEmptyFallbackText(json.RawMessage(`{"type":"function","name":"Read"}`)),
+	)
+	require.Equal(
+		t,
+		"The upstream model returned an empty response. Please retry this request.",
+		windsurfToolBridgeEmptyFallbackText(nil),
+	)
+}
+
 func TestWindsurfBuildResponsesOutputsReasoningAndToolCall(t *testing.T) {
 	output := windsurfBuildResponsesOutputs("rs_1", "I considered the tools.", "msg_1", "", []windsurfParsedToolCall{{
 		ID:        "call_1",
