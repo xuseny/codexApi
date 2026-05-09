@@ -2029,6 +2029,10 @@ func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, re
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
 
+	if account != nil && account.IsWindsurf() && account.Type == AccountTypeOAuth && account.GetCredentialBool("windsurf_builtin") {
+		return s.ForwardWindsurfResponses(ctx, c, account, body)
+	}
+
 	restrictionResult := s.detectCodexClientRestriction(c, account)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	logCodexCLIOnlyDetection(ctx, c, account, apiKeyID, restrictionResult, body)
