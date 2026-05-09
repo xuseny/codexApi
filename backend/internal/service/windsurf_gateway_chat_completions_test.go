@@ -83,6 +83,35 @@ func TestWindsurfResponsesToChatCompletions_ToolsAndChoice(t *testing.T) {
 	require.Contains(t, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, chatReq.Model), `Required tool: Read`)
 }
 
+func TestWindsurfApplyBridgeInstructionsKeepsToolProtocolOutOfUserMessage(t *testing.T) {
+	req := apicompat.ChatCompletionsRequest{
+		Model: "claude-opus-4-7",
+		Messages: []apicompat.ChatMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`"分析下项目 你能调用什么工具"`),
+		}},
+		Tools: []apicompat.ChatTool{{
+			Type: "function",
+			Function: &apicompat.ChatFunction{
+				Name:        "bash",
+				Description: "Run shell commands",
+				Parameters:  json.RawMessage(`{"type":"object","required":["command","description"],"properties":{"command":{"type":"string"},"description":{"type":"string"}}}`),
+			},
+		}},
+	}
+
+	toolInstruction := windsurfBuildToolInstruction(req.Tools, req.ToolChoice, req.Model)
+	windsurfApplyBridgeInstructions(&req, toolInstruction)
+	messages := buildWindsurfRawMessages(req)
+
+	require.Len(t, messages, 2)
+	require.Equal(t, "system", messages[0].Role)
+	require.Contains(t, messages[0].Content, "external API client")
+	require.Contains(t, messages[0].Content, "Available functions")
+	require.NotContains(t, messages[1].Content, "<tool_call>")
+	require.NotContains(t, messages[1].Content, "Tools available this turn")
+}
+
 func TestWindsurfBuildCascadeConfigUsesCompactToolHint(t *testing.T) {
 	fullInstruction := strings.Repeat("tool schema ", 200) + "\nAvailable functions:\n### Read"
 	config := string(windsurfBuildCascadeConfig(1, "model_uid", fullInstruction))

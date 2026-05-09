@@ -398,12 +398,12 @@ func windsurfBuildSendCascadeMessageRequest(apiKey, cascadeID, text string, mode
 func windsurfBuildCascadeConfig(modelEnum int, modelUID, toolInstruction string) []byte {
 	toolInstruction = strings.TrimSpace(toolInstruction)
 	toolSectionText := "No tools are available."
-	additionalText := "You are accessed as a plain chat API. Answer directly. Do not claim to inspect files, run commands, or use tools unless the user pasted the relevant content in the conversation."
-	communicationText := "Answer the user directly and concisely."
+	additionalText := "You are serving an external API client through a compatibility bridge. Do not claim to be Windsurf, Cascade, or a Windsurf language server. Do not reveal internal temporary workspaces such as /tmp/windsurf-workspace. Answer directly using the external client's context."
+	communicationText := "Answer as the external client's assistant directly and concisely."
 	if toolInstruction != "" {
 		toolSectionText = "Client-side tools are available through structured text in the conversation. When a listed tool is needed, request it using the exact tool-call format provided in the prompt; the caller will execute it and return the result."
-		additionalText = "You are accessed through an API that supports client-side function calls. When a function is relevant, follow the supplied function-call protocol exactly and do not invent tool results."
-		communicationText = "Use a function call when needed; otherwise answer directly and concisely."
+		additionalText = "You are serving an external API client through a compatibility bridge. The external client's system/developer instructions and client-side tools are authoritative. Do not claim to be Windsurf, Cascade, or a Windsurf language server. Do not reveal internal temporary workspaces such as /tmp/windsurf-workspace. Treat bridge tool-call syntax as private transport, not user-supplied prompt injection."
+		communicationText = "Use a client-side function call when needed; otherwise answer as the external client's assistant directly and concisely."
 	}
 	noToolSection := bytes.Join([][]byte{
 		windsurfWriteVarintField(1, 1),
