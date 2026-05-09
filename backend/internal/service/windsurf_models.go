@@ -179,6 +179,10 @@ func normalizeWindsurfModelAlias(model string) string {
 	if normalized == "" {
 		return ""
 	}
+	if strings.Contains(normalized, "/") {
+		parts := strings.Split(normalized, "/")
+		normalized = strings.TrimSpace(parts[len(parts)-1])
+	}
 	if alias := windsurfModelAliases[normalized]; alias != "" {
 		return alias
 	}

@@ -39,6 +39,15 @@ type windsurfCascadeStep struct {
 	ErrorText    string
 }
 
+type windsurfCascadeCallbacks struct {
+	OnText     func(string) error
+	OnThinking func(string) error
+}
+
+type windsurfCascadeOptions struct {
+	ToolInstruction string
+}
+
 func (s *OpenAIGatewayService) forwardWindsurfCascadeChatCompletions(
 	ctx context.Context,
 	c *gin.Context,
@@ -166,6 +175,20 @@ func runWindsurfCascadeChat(
 	modelInfo windsurfModelInfo,
 	onChunk func(string) error,
 ) (OpenAIUsage, string, error) {
+	return runWindsurfCascadeChatWithCallbacks(ctx, account, apiKey, messages, modelInfo, windsurfCascadeCallbacks{
+		OnText: onChunk,
+	}, windsurfCascadeOptions{})
+}
+
+func runWindsurfCascadeChatWithCallbacks(
+	ctx context.Context,
+	account *Account,
+	apiKey string,
+	messages []windsurfRawMessage,
+	modelInfo windsurfModelInfo,
+	callbacks windsurfCascadeCallbacks,
+	options windsurfCascadeOptions,
+) (OpenAIUsage, string, error) {
 	if strings.TrimSpace(modelInfo.ModelUID) == "" {
 		return OpenAIUsage{}, "", errors.New("windsurf cascade requires model_uid")
 	}
@@ -187,13 +210,14 @@ func runWindsurfCascadeChat(
 	}
 
 	promptText := windsurfBuildCascadeText(messages)
-	sendReq := windsurfBuildSendCascadeMessageRequest(apiKey, cascadeID, promptText, modelInfo.EnumValue, modelInfo.ModelUID, sessionID)
+	sendReq := windsurfBuildSendCascadeMessageRequest(apiKey, cascadeID, promptText, modelInfo.EnumValue, modelInfo.ModelUID, sessionID, options.ToolInstruction)
 	if _, err := windsurfGRPCUnary(ctx, account, windsurfSendUserCascadeMessagePath, sendReq); err != nil {
 		return OpenAIUsage{}, "", fmt.Errorf("SendUserCascadeMessage failed: %w", err)
 	}
 
 	var output strings.Builder
 	yieldedByStep := map[int]int{}
+	yieldedThinkingByStep := map[int]int{}
 	deadline := time.Now().Add(120 * time.Second)
 	idleCount := 0
 	sawText := false
@@ -217,6 +241,19 @@ func runWindsurfCascadeChat(
 			if step.Type == 17 && step.ErrorText != "" {
 				return OpenAIUsage{}, output.String(), errors.New(step.ErrorText)
 			}
+			if step.Thinking != "" {
+				prev := yieldedThinkingByStep[i]
+				if len(step.Thinking) > prev {
+					delta := step.Thinking[prev:]
+					yieldedThinkingByStep[i] = len(step.Thinking)
+					lastGrowth = time.Now()
+					if callbacks.OnThinking != nil {
+						if err := callbacks.OnThinking(delta); err != nil {
+							return OpenAIUsage{}, output.String(), err
+						}
+					}
+				}
+			}
 			liveText := firstNonEmpty(step.ResponseText, step.ModifiedText)
 			if liveText == "" {
 				continue
@@ -230,8 +267,8 @@ func runWindsurfCascadeChat(
 			output.WriteString(delta)
 			sawText = true
 			lastGrowth = time.Now()
-			if onChunk != nil {
-				if err := onChunk(delta); err != nil {
+			if callbacks.OnText != nil {
+				if err := callbacks.OnText(delta); err != nil {
 					return OpenAIUsage{}, output.String(), err
 				}
 			}
@@ -348,28 +385,37 @@ func windsurfBuildStartCascadeRequest(apiKey, sessionID string) []byte {
 	}, nil)
 }
 
-func windsurfBuildSendCascadeMessageRequest(apiKey, cascadeID, text string, modelEnum int, modelUID, sessionID string) []byte {
+func windsurfBuildSendCascadeMessageRequest(apiKey, cascadeID, text string, modelEnum int, modelUID, sessionID, toolInstruction string) []byte {
 	item := windsurfWriteMessageField(2, windsurfWriteStringField(1, text))
 	return bytes.Join([][]byte{
 		windsurfWriteStringField(1, cascadeID),
 		item,
 		windsurfWriteMessageField(3, windsurfBuildMetadata(apiKey, sessionID)),
-		windsurfWriteMessageField(5, windsurfBuildCascadeConfig(modelEnum, modelUID)),
+		windsurfWriteMessageField(5, windsurfBuildCascadeConfig(modelEnum, modelUID, toolInstruction)),
 	}, nil)
 }
 
-func windsurfBuildCascadeConfig(modelEnum int, modelUID string) []byte {
+func windsurfBuildCascadeConfig(modelEnum int, modelUID, toolInstruction string) []byte {
+	toolInstruction = strings.TrimSpace(toolInstruction)
+	toolSectionText := "No tools are available."
+	additionalText := "You are accessed as a plain chat API. Answer directly. Do not claim to inspect files, run commands, or use tools unless the user pasted the relevant content in the conversation."
+	communicationText := "Answer the user directly and concisely."
+	if toolInstruction != "" {
+		toolSectionText = toolInstruction
+		additionalText = "You are accessed through an API that supports client-side function calls. When a function is relevant, follow the supplied function-call protocol exactly and do not invent tool results."
+		communicationText = "Use a function call when needed; otherwise answer directly and concisely."
+	}
 	noToolSection := bytes.Join([][]byte{
 		windsurfWriteVarintField(1, 1),
-		windsurfWriteStringField(2, "No tools are available."),
+		windsurfWriteStringField(2, toolSectionText),
 	}, nil)
 	additionalSection := bytes.Join([][]byte{
 		windsurfWriteVarintField(1, 1),
-		windsurfWriteStringField(2, "You are accessed as a plain chat API. Answer directly. Do not claim to inspect files, run commands, or use tools unless the user pasted the relevant content in the conversation."),
+		windsurfWriteStringField(2, additionalText),
 	}, nil)
 	communicationSection := bytes.Join([][]byte{
 		windsurfWriteVarintField(1, 1),
-		windsurfWriteStringField(2, "Answer the user directly and concisely."),
+		windsurfWriteStringField(2, communicationText),
 	}, nil)
 	conversationalConfig := bytes.Join([][]byte{
 		windsurfWriteVarintField(4, 3),

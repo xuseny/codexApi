@@ -54,6 +54,123 @@ func TestWindsurfResponsesToChatCompletions_MessageArrayInput(t *testing.T) {
 	require.JSONEq(t, `"done"`, string(chatReq.Messages[3].Content))
 }
 
+func TestWindsurfResponsesToChatCompletions_ToolsAndChoice(t *testing.T) {
+	strict := true
+	req := &apicompat.ResponsesRequest{
+		Model: "gpt-5.5",
+		Input: json.RawMessage(`"read package"`),
+		Tools: []apicompat.ResponsesTool{{
+			Type:        "function",
+			Name:        "Read",
+			Description: "Read a file",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"file_path":{"type":"string"}}}`),
+			Strict:      &strict,
+		}},
+		ToolChoice: json.RawMessage(`{"type":"function","name":"Read"}`),
+	}
+
+	chatReq, err := windsurfResponsesToChatCompletions(req)
+	require.NoError(t, err)
+	require.Len(t, chatReq.Tools, 1)
+	require.Equal(t, "Read", chatReq.Tools[0].Function.Name)
+	require.True(t, *chatReq.Tools[0].Function.Strict)
+	require.JSONEq(t, `{"type":"function","name":"Read"}`, string(chatReq.ToolChoice))
+
+	instruction := windsurfBuildToolInstruction(chatReq.Tools, chatReq.ToolChoice, chatReq.Model)
+	require.Contains(t, instruction, `{"function_call":{"name":"<function_name>","arguments":{}}}`)
+	require.Contains(t, instruction, `tool_choice requires the function "Read"`)
+	require.Contains(t, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, chatReq.Model), `Required tool: Read`)
+}
+
+func TestBuildWindsurfRawMessagesToolHistory(t *testing.T) {
+	rawArgs := json.RawMessage(`{"file_path":"README.md"}`)
+	req := apicompat.ChatCompletionsRequest{
+		Messages: []apicompat.ChatMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []apicompat.ChatToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: apicompat.ChatFunctionCall{
+						Name:      "Read",
+						Arguments: string(rawArgs),
+					},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content:    json.RawMessage(`"file contents"`),
+			},
+		},
+	}
+
+	messages := buildWindsurfRawMessages(req)
+	require.Len(t, messages, 2)
+	require.Equal(t, "assistant", messages[0].Role)
+	require.Contains(t, messages[0].Content, `"function_call"`)
+	require.Contains(t, messages[0].Content, `"Read"`)
+	require.Equal(t, "user", messages[1].Role)
+	require.Contains(t, messages[1].Content, `<tool_result tool_call_id="call_1">`)
+	require.Contains(t, messages[1].Content, "file contents")
+}
+
+func TestWindsurfParseToolCallsFromText_GPTNative(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name: "Read",
+		},
+	}}
+
+	calls, cleaned := windsurfParseToolCallsFromText(`{"function_call":{"name":"Read","arguments":{"file_path":"README.md"}}}`, tools)
+	require.Empty(t, cleaned)
+	require.Len(t, calls, 1)
+	require.NotEmpty(t, calls[0].ID)
+	require.Equal(t, "Read", calls[0].Name)
+	require.JSONEq(t, `{"file_path":"README.md"}`, calls[0].Arguments)
+}
+
+func TestWindsurfBuildResponsesOutputsReasoningAndToolCall(t *testing.T) {
+	output := windsurfBuildResponsesOutputs("rs_1", "I considered the tools.", "msg_1", "", []windsurfParsedToolCall{{
+		ID:        "call_1",
+		Name:      "Read",
+		Arguments: `{"file_path":"README.md"}`,
+	}})
+
+	require.Len(t, output, 2)
+	require.Equal(t, "reasoning", output[0].Type)
+	require.Equal(t, "I considered the tools.", output[0].Summary[0].Text)
+	require.Equal(t, "function_call", output[1].Type)
+	require.Equal(t, "call_1", output[1].CallID)
+	require.Equal(t, "Read", output[1].Name)
+	require.JSONEq(t, `{"file_path":"README.md"}`, output[1].Arguments)
+}
+
+func TestWindsurfBuildAnthropicBlocksReasoningAndToolUse(t *testing.T) {
+	blocks := windsurfBuildAnthropicBlocks("I considered the tools.", "", []windsurfParsedToolCall{{
+		ID:        "call_1",
+		Name:      "Read",
+		Arguments: `{"file_path":"README.md"}`,
+	}})
+
+	require.Len(t, blocks, 2)
+	require.Equal(t, "thinking", blocks[0].Type)
+	require.Equal(t, "I considered the tools.", blocks[0].Thinking)
+	require.Equal(t, "tool_use", blocks[1].Type)
+	require.Equal(t, "call_1", blocks[1].ID)
+	require.Equal(t, "Read", blocks[1].Name)
+	require.JSONEq(t, `{"file_path":"README.md"}`, string(blocks[1].Input))
+
+	resp := buildWindsurfAnthropicResponseWithBlocks("msg_test", "claude-opus-4-7", blocks, "tool_use", OpenAIUsage{
+		InputTokens:  3,
+		OutputTokens: 2,
+	})
+	require.Equal(t, "tool_use", resp.StopReason)
+	require.Len(t, resp.Content, 2)
+	require.Equal(t, "tool_use", resp.Content[1].Type)
+}
+
 func TestWindsurfResponsesContentPartEventsSerialize(t *testing.T) {
 	itemSSE, err := apicompat.ResponsesEventToSSE(apicompat.ResponsesStreamEvent{
 		Type:        "response.output_item.added",
@@ -107,6 +224,7 @@ func TestResolveWindsurfModelSupportsClaudeOpus47Alias(t *testing.T) {
 	require.Equal(t, "claude-opus-4-7-medium", upstream)
 	require.Equal(t, "claude-opus-4-7-medium", info.Name)
 	require.True(t, IsWindsurfBuiltinModel("claude-opus-4-7"))
+	require.True(t, IsWindsurfBuiltinModel("anthropic/claude-sonnet-4-6"))
 }
 
 func TestBuildWindsurfAnthropicResponse(t *testing.T) {

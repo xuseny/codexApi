@@ -17,13 +17,13 @@ vi.mock('@/composables/useClipboard', () => ({
 import UseKeyModal from '../UseKeyModal.vue'
 
 describe('UseKeyModal', () => {
-  it('renders GPT-5.4 mini entry in OpenCode config', async () => {
-    const wrapper = mount(UseKeyModal, {
+  const mountModal = (platform: 'openai' | 'anthropic' | 'windsurf') =>
+    mount(UseKeyModal, {
       props: {
         show: true,
         apiKey: 'sk-test',
         baseUrl: 'https://example.com/v1',
-        platform: 'openai'
+        platform
       },
       global: {
         stubs: {
@@ -37,6 +37,7 @@ describe('UseKeyModal', () => {
       }
     })
 
+  const openOpenCodeTab = async (wrapper: ReturnType<typeof mount>) => {
     const opencodeTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.opencode')
     )
@@ -44,10 +45,62 @@ describe('UseKeyModal', () => {
     expect(opencodeTab).toBeDefined()
     await opencodeTab!.trigger('click')
     await nextTick()
+  }
+
+  it('renders GPT-5.4 mini entry in OpenCode config', async () => {
+    const wrapper = mountModal('openai')
+
+    await openOpenCodeTab(wrapper)
 
     const codeBlock = wrapper.find('pre code')
     expect(codeBlock.exists()).toBe(true)
     expect(codeBlock.text()).toContain('"name": "GPT-5.4 Mini"')
     expect(codeBlock.text()).not.toContain('"name": "GPT-5.4 Nano"')
+  })
+
+  it('enables OpenCode reasoning and tool metadata for OpenAI models', async () => {
+    const wrapper = mountModal('openai')
+
+    await openOpenCodeTab(wrapper)
+
+    const config = JSON.parse(wrapper.find('pre code').text())
+    expect(config.provider.openai.models['gpt-5.5'].reasoning).toBe(true)
+    expect(config.provider.openai.models['gpt-5.5'].tool_call).toBe(true)
+    expect(config.provider.openai.models['gpt-5.5'].variants.high.reasoningEffort).toBe('high')
+    expect(config.permission.read).toBe('allow')
+    expect(config.permission.grep).toBe('allow')
+  })
+
+  it('renders Anthropic provider in OpenAI OpenCode config for Claude dispatch', async () => {
+    const wrapper = mountModal('openai')
+
+    await openOpenCodeTab(wrapper)
+
+    const config = JSON.parse(wrapper.find('pre code').text())
+    expect(config.provider.anthropic.npm).toBe('@ai-sdk/anthropic')
+    expect(config.provider.anthropic.models['claude-opus-4-7'].tool_call).toBe(true)
+    expect(config.provider.anthropic.models['claude-opus-4-7'].reasoning).toBe(true)
+  })
+
+  it('renders combined OpenAI and Anthropic OpenCode config for Windsurf groups', async () => {
+    const wrapper = mountModal('windsurf')
+
+    await openOpenCodeTab(wrapper)
+
+    const config = JSON.parse(wrapper.find('pre code').text())
+    expect(config.provider.openai.models['gpt-5.5'].tool_call).toBe(true)
+    expect(config.provider.anthropic.models['claude-sonnet-4-6'].tool_call).toBe(true)
+    expect(config.provider.anthropic.options.baseURL).toBe('https://example.com/v1')
+  })
+
+  it('renders Claude model metadata in Anthropic OpenCode config', async () => {
+    const wrapper = mountModal('anthropic')
+
+    await openOpenCodeTab(wrapper)
+
+    const config = JSON.parse(wrapper.find('pre code').text())
+    expect(config.provider.anthropic.models['claude-opus-4-7'].reasoning).toBe(true)
+    expect(config.provider.anthropic.models['claude-opus-4-7'].tool_call).toBe(true)
+    expect(config.provider.anthropic.models['claude-opus-4-7'].variants.high.thinking.budgetTokens).toBe(24576)
   })
 })

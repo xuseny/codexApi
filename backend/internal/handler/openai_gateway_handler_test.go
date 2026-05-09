@@ -437,6 +437,44 @@ func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 	})
 }
 
+func TestOpenAIMessagesDispatchAllowsNativeWindsurfClaude(t *testing.T) {
+	t.Run("openai_group_without_messages_dispatch_allows_windsurf_claude", func(t *testing.T) {
+		apiKey := &service.APIKey{
+			Group: &service.Group{
+				Platform:              service.PlatformOpenAI,
+				AllowMessagesDispatch: false,
+			},
+		}
+
+		require.True(t, shouldAllowOpenAIMessagesDispatch(apiKey, "claude-opus-4-7"))
+		require.True(t, shouldPreferNativeWindsurfMessagesDispatch(apiKey, "claude-opus-4-7"))
+	})
+
+	t.Run("openai_group_without_messages_dispatch_blocks_non_windsurf_dispatch", func(t *testing.T) {
+		apiKey := &service.APIKey{
+			Group: &service.Group{
+				Platform:              service.PlatformOpenAI,
+				AllowMessagesDispatch: false,
+			},
+		}
+
+		require.False(t, shouldAllowOpenAIMessagesDispatch(apiKey, "claude-unknown"))
+		require.False(t, shouldPreferNativeWindsurfMessagesDispatch(apiKey, "claude-unknown"))
+	})
+
+	t.Run("windsurf_group_allows_supported_messages_models", func(t *testing.T) {
+		apiKey := &service.APIKey{
+			Group: &service.Group{
+				Platform:              service.PlatformWindsurf,
+				AllowMessagesDispatch: false,
+			},
+		}
+
+		require.True(t, shouldAllowOpenAIMessagesDispatch(apiKey, "anthropic/claude-sonnet-4-6"))
+		require.True(t, shouldPreferNativeWindsurfMessagesDispatch(apiKey, "claude-sonnet-4-6"))
+	})
+}
+
 func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

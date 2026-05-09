@@ -75,6 +75,41 @@ func shouldRetryOpenAIMessagesWithNativeWindsurf(requestedModel, failedRoutingMo
 	return service.IsWindsurfBuiltinModel(requestedModel)
 }
 
+func shouldAllowOpenAIMessagesDispatch(apiKey *service.APIKey, requestedModel string) bool {
+	if apiKey == nil || apiKey.Group == nil {
+		return true
+	}
+	if apiKey.Group.AllowMessagesDispatch {
+		return true
+	}
+	if apiKey.Group.Platform == service.PlatformWindsurf {
+		return service.IsWindsurfBuiltinModel(requestedModel)
+	}
+	return isNativeWindsurfClaudeMessagesModel(requestedModel)
+}
+
+func shouldPreferNativeWindsurfMessagesDispatch(apiKey *service.APIKey, requestedModel string) bool {
+	if apiKey == nil || apiKey.Group == nil {
+		return false
+	}
+	if apiKey.Group.Platform == service.PlatformWindsurf {
+		return service.IsWindsurfBuiltinModel(requestedModel)
+	}
+	if apiKey.Group.Platform == service.PlatformOpenAI {
+		return isNativeWindsurfClaudeMessagesModel(requestedModel)
+	}
+	return false
+}
+
+func isNativeWindsurfClaudeMessagesModel(model string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(trimmed, "/") {
+		parts := strings.Split(trimmed, "/")
+		trimmed = strings.TrimSpace(parts[len(parts)-1])
+	}
+	return strings.HasPrefix(trimmed, "claude") && service.IsWindsurfBuiltinModel(trimmed)
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -558,13 +593,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	// 检查分组是否允许 /v1/messages 调度
-	if apiKey.Group != nil && !apiKey.Group.AllowMessagesDispatch {
-		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
-			"This group does not allow /v1/messages dispatch")
-		return
-	}
-
 	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
@@ -595,6 +623,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 	reqModel := modelResult.String()
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
+	if !shouldAllowOpenAIMessagesDispatch(apiKey, routingModel) {
+		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
+			"This group does not allow /v1/messages dispatch")
+		return
+	}
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 
@@ -659,8 +692,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	effectiveMappedModel := preferredMappedModel
 	gatewayPlatform := resolveOpenAICompatibleGatewayPlatform(apiKey)
-	nativeWindsurfDispatch := false
-	nativeWindsurfDispatchTried := false
+	nativeWindsurfDispatch := shouldPreferNativeWindsurfMessagesDispatch(apiKey, routingModel)
+	nativeWindsurfDispatchTried := nativeWindsurfDispatch
+	mappedDispatchTried := false
+	if nativeWindsurfDispatch {
+		effectiveMappedModel = ""
+	}
 
 	for {
 		currentRoutingModel := routingModel
@@ -692,6 +729,21 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			if len(failedAccountIDs) == 0 &&
+				nativeWindsurfDispatch &&
+				!mappedDispatchTried &&
+				apiKey.Group != nil &&
+				apiKey.Group.AllowMessagesDispatch &&
+				preferredMappedModel != "" {
+				nativeWindsurfDispatch = false
+				mappedDispatchTried = true
+				effectiveMappedModel = preferredMappedModel
+				reqLog.Info("openai_messages.fallback_mapped_dispatch_after_native_windsurf_unavailable",
+					zap.String("requested_model", routingModel),
+					zap.String("mapped_model", preferredMappedModel),
+				)
+				continue
+			}
 			if len(failedAccountIDs) == 0 &&
 				!nativeWindsurfDispatchTried &&
 				shouldRetryOpenAIMessagesWithNativeWindsurf(routingModel, currentRoutingModel) {

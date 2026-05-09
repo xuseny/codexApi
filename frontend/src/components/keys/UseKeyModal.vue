@@ -180,6 +180,7 @@ const activeClientTab = ref<string>('claude')
 const defaultClientTab = computed(() => {
   switch (props.platform) {
     case 'openai':
+    case 'windsurf':
       return 'codex'
     case 'gemini':
       return 'gemini'
@@ -288,6 +289,18 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'gemini', label: t('keys.useKeyModal.cliTabs.geminiCli'), icon: SparkleIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
+    case 'windsurf':
+      return [
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
+        { id: 'codex-ws', label: t('keys.useKeyModal.cliTabs.codexCliWs'), icon: TerminalIcon },
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
+    case 'kiro':
+      return [
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
     default:
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
@@ -350,6 +363,13 @@ const platformNote = computed(() => {
       return activeClientTab.value === 'claude'
         ? t('keys.useKeyModal.antigravity.claudeNote')
         : t('keys.useKeyModal.antigravity.geminiNote')
+    case 'windsurf':
+      if (activeClientTab.value === 'claude') {
+        return t('keys.useKeyModal.note')
+      }
+      return activeTab.value === 'windows'
+        ? t('keys.useKeyModal.openai.noteWindows')
+        : t('keys.useKeyModal.openai.note')
     default:
       return t('keys.useKeyModal.note')
   }
@@ -407,6 +427,10 @@ const currentFiles = computed((): FileConfig[] => {
           generateOpenCodeConfig('antigravity-claude', antigravityBase, apiKey, 'opencode.json (Claude)'),
           generateOpenCodeConfig('antigravity-gemini', antigravityGeminiBase, apiKey, 'opencode.json (Gemini)')
         ]
+      case 'windsurf':
+        return [generateOpenCodeConfig('windsurf', apiBase, apiKey)]
+      case 'kiro':
+        return [generateOpenCodeConfig('anthropic', apiBase, apiKey)]
       default:
         return [generateOpenCodeConfig('openai', apiBase, apiKey)]
     }
@@ -428,6 +452,16 @@ const currentFiles = computed((): FileConfig[] => {
         return [generateGeminiCliContent(`${baseUrl}/antigravity`, apiKey)]
       }
       return generateAnthropicFiles(`${baseUrl}/antigravity`, apiKey)
+    case 'windsurf':
+      if (activeClientTab.value === 'claude') {
+        return generateAnthropicFiles(baseUrl, apiKey)
+      }
+      if (activeClientTab.value === 'codex-ws') {
+        return generateOpenAIWsFiles(baseUrl, apiKey)
+      }
+      return generateOpenAIFiles(baseUrl, apiKey)
+    case 'kiro':
+      return generateAnthropicFiles(baseUrl, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
   }
@@ -607,14 +641,132 @@ responses_websockets_v2 = true`
   ]
 }
 
+const openCodeToolPermission = {
+  read: 'allow',
+  list: 'allow',
+  glob: 'allow',
+  grep: 'allow',
+  lsp: 'allow',
+  edit: 'ask',
+  bash: 'ask',
+  webfetch: 'ask',
+  websearch: 'ask'
+}
+
+const openCodeReasoningInclude = ['reasoning.encrypted_content']
+
+const openCodeOpenAIOptions = {
+  store: false,
+  reasoningSummary: 'auto',
+  include: openCodeReasoningInclude
+}
+
+const openCodeOpenAIVariantOptions: Record<string, Record<string, unknown>> = {
+  low: {
+    reasoningEffort: 'low',
+    reasoningSummary: 'auto',
+    include: openCodeReasoningInclude
+  },
+  medium: {
+    reasoningEffort: 'medium',
+    reasoningSummary: 'auto',
+    include: openCodeReasoningInclude
+  },
+  high: {
+    reasoningEffort: 'high',
+    reasoningSummary: 'auto',
+    include: openCodeReasoningInclude
+  },
+  xhigh: {
+    reasoningEffort: 'xhigh',
+    reasoningSummary: 'auto',
+    include: openCodeReasoningInclude
+  }
+}
+
+const openCodeClaudeThinkingVariants: Record<string, Record<string, unknown>> = {
+  low: {
+    thinking: {
+      type: 'enabled',
+      budgetTokens: 4096
+    }
+  },
+  medium: {
+    thinking: {
+      type: 'enabled',
+      budgetTokens: 12000
+    }
+  },
+  high: {
+    thinking: {
+      type: 'enabled',
+      budgetTokens: 24576
+    }
+  },
+  xhigh: {
+    thinking: {
+      type: 'enabled',
+      budgetTokens: 32768
+    }
+  }
+}
+
+function applyOpenCodeOpenAICapabilities(models: Record<string, any>) {
+  Object.values(models).forEach((model: any) => {
+    model.attachment = true
+    model.reasoning = true
+    model.tool_call = true
+    model.options = {
+      ...openCodeOpenAIOptions,
+      ...(model.options || {})
+    }
+    if (model.variants) {
+      Object.keys(model.variants).forEach((variant) => {
+        model.variants[variant] = {
+          ...(openCodeOpenAIVariantOptions[variant] || {}),
+          ...(model.variants[variant] || {})
+        }
+      })
+    }
+  })
+  return models
+}
+
+function applyOpenCodeClaudeCapabilities(models: Record<string, any>) {
+  Object.values(models).forEach((model: any) => {
+    model.attachment = true
+    model.reasoning = true
+    model.tool_call = true
+    model.interleaved = true
+    model.options = {
+      thinking: {
+        type: 'enabled',
+        budgetTokens: 24576
+      },
+      ...(model.options || {})
+    }
+    model.variants = {
+      ...openCodeClaudeThinkingVariants,
+      ...(model.variants || {})
+    }
+  })
+  return models
+}
+
 function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: string, pathLabel?: string): FileConfig {
-  const provider: Record<string, any> = {
-    [platform]: {
+  const provider: Record<string, any> = {}
+  const addProvider = (providerID: string, optionsBaseUrl = baseUrl) => {
+    provider[providerID] = {
       options: {
-        baseURL: baseUrl,
+        baseURL: optionsBaseUrl,
         apiKey
       }
     }
+    return provider[providerID]
+  }
+
+  if (platform !== 'windsurf') {
+    addProvider(platform)
   }
   const openaiModels = {
     'gpt-5.2': {
@@ -955,6 +1107,116 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     }
   }
   const claudeModels = {
+    'claude-opus-4-7': {
+      name: 'Claude Opus 4.7',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-low': {
+      name: 'Claude Opus 4.7 Low',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-medium': {
+      name: 'Claude Opus 4.7 Medium',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-high': {
+      name: 'Claude Opus 4.7 High',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-xhigh': {
+      name: 'Claude Opus 4.7 XHigh',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-medium-thinking': {
+      name: 'Claude Opus 4.7 Medium (Thinking)',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-high-thinking': {
+      name: 'Claude Opus 4.7 High (Thinking)',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-xhigh-thinking': {
+      name: 'Claude Opus 4.7 XHigh (Thinking)',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-7-max': {
+      name: 'Claude Opus 4.7 Max',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-6': {
+      name: 'Claude 4.6 Opus',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
     'claude-opus-4-6-thinking': {
       name: 'Claude 4.6 Opus (Thinking)',
       limit: {
@@ -991,25 +1253,39 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     }
   }
 
+  const configuredOpenAIModels = applyOpenCodeOpenAICapabilities(openaiModels)
+  const configuredClaudeModels = applyOpenCodeClaudeCapabilities(claudeModels)
+
   if (platform === 'gemini') {
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].models = geminiModels
   } else if (platform === 'anthropic') {
     provider[platform].npm = '@ai-sdk/anthropic'
+    provider[platform].models = configuredClaudeModels
   } else if (platform === 'antigravity-claude') {
     provider[platform].npm = '@ai-sdk/anthropic'
     provider[platform].name = 'Antigravity (Claude)'
-    provider[platform].models = claudeModels
+    provider[platform].models = configuredClaudeModels
   } else if (platform === 'antigravity-gemini') {
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].name = 'Antigravity (Gemini)'
     provider[platform].models = antigravityGeminiModels
   } else if (platform === 'openai') {
-    provider[platform].models = openaiModels
+    provider[platform].models = configuredOpenAIModels
+    const anthropicProvider = addProvider('anthropic')
+    anthropicProvider.npm = '@ai-sdk/anthropic'
+    anthropicProvider.models = configuredClaudeModels
+  } else if (platform === 'windsurf') {
+    const openaiProvider = addProvider('openai')
+    openaiProvider.models = configuredOpenAIModels
+
+    const anthropicProvider = addProvider('anthropic')
+    anthropicProvider.npm = '@ai-sdk/anthropic'
+    anthropicProvider.models = configuredClaudeModels
   }
 
   const agent =
-    platform === 'openai'
+    platform === 'openai' || platform === 'windsurf' || platform === 'anthropic'
       ? {
           build: {
             options: {
@@ -1028,6 +1304,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     {
       provider,
       ...(agent ? { agent } : {}),
+      permission: openCodeToolPermission,
       $schema: 'https://opencode.ai/config.json'
     },
     null,

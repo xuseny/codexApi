@@ -178,6 +178,12 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	if err != nil {
 		return nil, err
 	}
+	toolInstruction := windsurfBuildToolInstruction(chatReq.Tools, chatReq.ToolChoice, originalModel)
+	toolsEnabled := toolInstruction != ""
+	if toolsEnabled {
+		chatReq.Instructions = windsurfJoinSections(chatReq.Instructions, toolInstruction)
+		chatReq.Messages = windsurfInjectToolUserHint(chatReq.Messages, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, originalModel))
+	}
 	messages := buildWindsurfRawMessages(chatReq)
 	if len(messages) == 0 {
 		return nil, errors.New("windsurf responses request requires at least one message")
@@ -195,17 +201,31 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 
 	responseID := "resp_" + uuid.NewString()
 	itemID := "msg_" + uuid.NewString()
+	reasoningItemID := "rs_" + uuid.NewString()
 	createdAt := time.Now().Unix()
 	var firstTokenMs *int
 	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
+	markFirstToken := func() {
+		if firstTokenMs == nil {
+			v := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &v
+		}
+	}
 
-	if responsesReq.Stream && c != nil {
+	streaming := responsesReq.Stream && c != nil
+	sequence := 0
+	nextOutputIndex := 0
+	messageIndex := -1
+	reasoningIndex := -1
+	if streaming {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
 		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
 			Type:           "response.created",
-			SequenceNumber: 0,
+			SequenceNumber: sequence,
 			Response: &apicompat.ResponsesResponse{
 				ID:        responseID,
 				Object:    "response",
@@ -217,10 +237,39 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 		}); err != nil {
 			return nil, err
 		}
+		sequence++
+	}
+
+	ensureReasoningItem := func() error {
+		if !streaming || reasoningIndex >= 0 {
+			return nil
+		}
+		reasoningIndex = nextOutputIndex
+		nextOutputIndex++
+		err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+			Type:           "response.output_item.added",
+			SequenceNumber: sequence,
+			OutputIndex:    reasoningIndex,
+			Item: &apicompat.ResponsesOutput{
+				Type:    "reasoning",
+				ID:      reasoningItemID,
+				Status:  "in_progress",
+				Summary: []apicompat.ResponsesSummary{},
+			},
+		})
+		sequence++
+		return err
+	}
+	ensureMessageItem := func() error {
+		if !streaming || messageIndex >= 0 {
+			return nil
+		}
+		messageIndex = nextOutputIndex
+		nextOutputIndex++
 		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
 			Type:           "response.output_item.added",
-			SequenceNumber: 1,
-			OutputIndex:    0,
+			SequenceNumber: sequence,
+			OutputIndex:    messageIndex,
 			Item: &apicompat.ResponsesOutput{
 				Type:    "message",
 				ID:      itemID,
@@ -229,35 +278,38 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 				Content: []apicompat.ResponsesContentPart{},
 			},
 		}); err != nil {
-			return nil, err
+			return err
 		}
-		if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEvent(
+		sequence++
+		if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEventAt(
 			"response.content_part.added",
-			2,
+			sequence,
+			messageIndex,
 			itemID,
 			"",
 		)); err != nil {
-			return nil, err
+			return err
 		}
+		sequence++
+		return nil
 	}
 
-	sequence := 3
 	onChunk := func(text string) error {
 		if text == "" {
 			return nil
 		}
-		if firstTokenMs == nil {
-			v := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &v
-		}
+		markFirstToken()
 		contentBuilder.WriteString(text)
-		if !responsesReq.Stream || c == nil {
+		if !streaming {
 			return nil
+		}
+		if err := ensureMessageItem(); err != nil {
+			return err
 		}
 		err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
 			Type:           "response.output_text.delta",
 			SequenceNumber: sequence,
-			OutputIndex:    0,
+			OutputIndex:    messageIndex,
 			ContentIndex:   0,
 			Delta:          text,
 			ItemID:         itemID,
@@ -265,67 +317,162 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 		sequence++
 		return err
 	}
-
-	callback := onChunk
-	if !responsesReq.Stream {
-		callback = nil
+	onThinking := func(text string) error {
+		if text == "" {
+			return nil
+		}
+		markFirstToken()
+		reasoningBuilder.WriteString(text)
+		if !streaming {
+			return nil
+		}
+		if err := ensureReasoningItem(); err != nil {
+			return err
+		}
+		err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+			Type:           "response.reasoning_summary_text.delta",
+			SequenceNumber: sequence,
+			OutputIndex:    reasoningIndex,
+			SummaryIndex:   0,
+			Delta:          text,
+			ItemID:         reasoningItemID,
+		})
+		sequence++
+		return err
 	}
-	usage, text, err := s.runWindsurfResponsesRequest(ctx, account, apiKey, messages, modelInfo, callback)
+
+	callbacks := windsurfResponsesCallbacks{
+		OnText:     onChunk,
+		OnThinking: onThinking,
+	}
+	if !streaming || toolsEnabled {
+		callbacks.OnText = nil
+	}
+	usage, text, err := s.runWindsurfResponsesRequestWithCallbacks(ctx, account, apiKey, messages, modelInfo, callbacks, windsurfResponsesRunOptions{
+		CascadeToolInstruction: toolInstruction,
+	})
 	if err != nil {
 		if c != nil && !responsesReq.Stream {
 			writeResponsesError(c, http.StatusBadGateway, "upstream_error", err.Error())
 		}
 		return nil, err
 	}
-	if !responsesReq.Stream {
+
+	var toolCalls []windsurfParsedToolCall
+	if toolsEnabled {
+		toolCalls, _ = windsurfParseToolCallsFromText(text, chatReq.Tools)
+	}
+	if callbacks.OnText == nil && len(toolCalls) == 0 {
 		contentBuilder.WriteString(text)
+	}
+	fullText := contentBuilder.String()
+	reasoningText := reasoningBuilder.String()
+
+	if !responsesReq.Stream {
 		if c != nil {
-			c.JSON(http.StatusOK, windsurfBuildResponsesResponse(responseID, itemID, originalModel, text, usage, createdAt))
+			output := windsurfBuildResponsesOutputs(reasoningItemID, reasoningText, itemID, fullText, toolCalls)
+			c.JSON(http.StatusOK, windsurfBuildResponsesResponseWithOutputs(responseID, originalModel, output, usage, createdAt))
 		}
 	} else if c != nil {
-		fullText := contentBuilder.String()
-		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
-			Type:           "response.output_text.done",
-			SequenceNumber: sequence,
-			OutputIndex:    0,
-			ContentIndex:   0,
-			Text:           fullText,
-			ItemID:         itemID,
-		}); err != nil {
-			return nil, err
+		if toolsEnabled && len(toolCalls) > 0 {
+			markFirstToken()
+			if err := windsurfWriteResponsesToolCallEvents(c, toolCalls, &sequence, &nextOutputIndex); err != nil {
+				return nil, err
+			}
+		} else if fullText != "" {
+			markFirstToken()
+			if err := ensureMessageItem(); err != nil {
+				return nil, err
+			}
+			if toolsEnabled {
+				if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+					Type:           "response.output_text.delta",
+					SequenceNumber: sequence,
+					OutputIndex:    messageIndex,
+					ContentIndex:   0,
+					Delta:          fullText,
+					ItemID:         itemID,
+				}); err != nil {
+					return nil, err
+				}
+				sequence++
+			}
 		}
-		sequence++
-		if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEvent(
-			"response.content_part.done",
-			sequence,
-			itemID,
-			fullText,
-		)); err != nil {
-			return nil, err
+		if reasoningIndex >= 0 {
+			if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+				Type:           "response.reasoning_summary_text.done",
+				SequenceNumber: sequence,
+				OutputIndex:    reasoningIndex,
+				SummaryIndex:   0,
+				Text:           reasoningText,
+				ItemID:         reasoningItemID,
+			}); err != nil {
+				return nil, err
+			}
+			sequence++
+			if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: sequence,
+				OutputIndex:    reasoningIndex,
+				Item: &apicompat.ResponsesOutput{
+					Type:   "reasoning",
+					ID:     reasoningItemID,
+					Status: "completed",
+					Summary: []apicompat.ResponsesSummary{{
+						Type: "summary_text",
+						Text: reasoningText,
+					}},
+				},
+			}); err != nil {
+				return nil, err
+			}
+			sequence++
 		}
-		sequence++
-		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
-			Type:           "response.output_item.done",
-			SequenceNumber: sequence,
-			OutputIndex:    0,
-			Item: &apicompat.ResponsesOutput{
-				Type:   "message",
-				ID:     itemID,
-				Role:   "assistant",
-				Status: "completed",
-				Content: []apicompat.ResponsesContentPart{{
-					Type: "output_text",
-					Text: fullText,
-				}},
-			},
-		}); err != nil {
-			return nil, err
+		if messageIndex >= 0 {
+			if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+				Type:           "response.output_text.done",
+				SequenceNumber: sequence,
+				OutputIndex:    messageIndex,
+				ContentIndex:   0,
+				Text:           fullText,
+				ItemID:         itemID,
+			}); err != nil {
+				return nil, err
+			}
+			sequence++
+			if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEventAt(
+				"response.content_part.done",
+				sequence,
+				messageIndex,
+				itemID,
+				fullText,
+			)); err != nil {
+				return nil, err
+			}
+			sequence++
+			if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: sequence,
+				OutputIndex:    messageIndex,
+				Item: &apicompat.ResponsesOutput{
+					Type:   "message",
+					ID:     itemID,
+					Role:   "assistant",
+					Status: "completed",
+					Content: []apicompat.ResponsesContentPart{{
+						Type: "output_text",
+						Text: fullText,
+					}},
+				},
+			}); err != nil {
+				return nil, err
+			}
+			sequence++
 		}
-		sequence++
 		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
 			Type:           "response.completed",
 			SequenceNumber: sequence,
-			Response:       windsurfBuildResponsesResponse(responseID, itemID, originalModel, fullText, usage, createdAt),
+			Response:       windsurfBuildResponsesResponseWithOutputs(responseID, originalModel, windsurfBuildResponsesOutputs(reasoningItemID, reasoningText, itemID, fullText, toolCalls), usage, createdAt),
 		}); err != nil {
 			return nil, err
 		}
@@ -379,6 +526,12 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 	if err != nil {
 		return nil, err
 	}
+	toolInstruction := windsurfBuildToolInstruction(chatReq.Tools, chatReq.ToolChoice, originalModel)
+	toolsEnabled := toolInstruction != ""
+	if toolsEnabled {
+		chatReq.Instructions = windsurfJoinSections(chatReq.Instructions, toolInstruction)
+		chatReq.Messages = windsurfInjectToolUserHint(chatReq.Messages, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, originalModel))
+	}
 	messages := buildWindsurfRawMessages(chatReq)
 	if len(messages) == 0 {
 		return nil, errors.New("windsurf anthropic request requires at least one message")
@@ -396,8 +549,20 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 
 	messageID := "msg_" + uuid.NewString()
 	blockIndex := 0
+	blockOpen := false
+	blockType := ""
 	var firstTokenMs *int
-	if anthropicReq.Stream && c != nil {
+	var textBuilder strings.Builder
+	var thinkingBuilder strings.Builder
+	markFirstToken := func() {
+		if firstTokenMs == nil {
+			v := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &v
+		}
+	}
+
+	streaming := anthropicReq.Stream && c != nil
+	if streaming {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
@@ -415,45 +580,105 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 		}); err != nil {
 			return nil, err
 		}
-		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
-			Type:  "content_block_start",
-			Index: &blockIndex,
-			ContentBlock: &apicompat.AnthropicContentBlock{
-				Type: "text",
-				Text: "",
-			},
-		}); err != nil {
-			return nil, err
+	}
+	closeBlock := func() error {
+		if !streaming || !blockOpen {
+			return nil
 		}
+		idx := blockIndex
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:  "content_block_stop",
+			Index: &idx,
+		}); err != nil {
+			return err
+		}
+		blockOpen = false
+		blockType = ""
+		blockIndex++
+		return nil
+	}
+	ensureBlock := func(nextType string) error {
+		if !streaming {
+			return nil
+		}
+		if blockOpen && blockType == nextType {
+			return nil
+		}
+		if err := closeBlock(); err != nil {
+			return err
+		}
+		idx := blockIndex
+		blockOpen = true
+		blockType = nextType
+		block := &apicompat.AnthropicContentBlock{Type: nextType}
+		switch nextType {
+		case "thinking":
+			block.Thinking = ""
+		default:
+			block.Text = ""
+		}
+		return writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:         "content_block_start",
+			Index:        &idx,
+			ContentBlock: block,
+		})
 	}
 
-	var textBuilder strings.Builder
 	onChunk := func(text string) error {
 		if text == "" {
 			return nil
 		}
-		if firstTokenMs == nil {
-			v := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &v
-		}
+		markFirstToken()
 		textBuilder.WriteString(text)
-		if !anthropicReq.Stream || c == nil {
+		if !streaming {
 			return nil
 		}
+		if err := ensureBlock("text"); err != nil {
+			return err
+		}
+		idx := blockIndex
 		return writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
 			Type:  "content_block_delta",
-			Index: &blockIndex,
+			Index: &idx,
 			Delta: &apicompat.AnthropicDelta{
 				Type: "text_delta",
 				Text: text,
 			},
 		})
 	}
-	if !anthropicReq.Stream {
-		onChunk = nil
+	onThinking := func(text string) error {
+		if text == "" {
+			return nil
+		}
+		markFirstToken()
+		thinkingBuilder.WriteString(text)
+		if !streaming {
+			return nil
+		}
+		if err := ensureBlock("thinking"); err != nil {
+			return err
+		}
+		idx := blockIndex
+		return writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:  "content_block_delta",
+			Index: &idx,
+			Delta: &apicompat.AnthropicDelta{
+				Type:     "thinking_delta",
+				Thinking: text,
+			},
+		})
 	}
 
-	usage, text, err := s.runWindsurfResponsesRequest(ctx, account, apiKey, messages, modelInfo, onChunk)
+	callbacks := windsurfResponsesCallbacks{
+		OnText:     onChunk,
+		OnThinking: onThinking,
+	}
+	if !streaming || toolsEnabled {
+		callbacks.OnText = nil
+	}
+	usage, text, err := s.runWindsurfResponsesRequestWithCallbacks(ctx, account, apiKey, messages, modelInfo, callbacks, windsurfResponsesRunOptions{
+		CascadeToolInstruction: toolInstruction,
+	})
 	if err != nil {
 		if c != nil && !anthropicReq.Stream {
 			writeAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
@@ -461,21 +686,92 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 		return nil, err
 	}
 
+	var toolCalls []windsurfParsedToolCall
+	if toolsEnabled {
+		toolCalls, _ = windsurfParseToolCallsFromText(text, chatReq.Tools)
+	}
+	if callbacks.OnText == nil && len(toolCalls) == 0 {
+		textBuilder.WriteString(text)
+	}
+	fullText := textBuilder.String()
+	thinkingText := thinkingBuilder.String()
+	stopReason := "end_turn"
+	if len(toolCalls) > 0 {
+		stopReason = "tool_use"
+	}
+
 	if !anthropicReq.Stream {
 		if c != nil {
-			c.JSON(http.StatusOK, buildWindsurfAnthropicResponse(messageID, originalModel, text, usage))
+			c.JSON(http.StatusOK, buildWindsurfAnthropicResponseWithBlocks(messageID, originalModel, windsurfBuildAnthropicBlocks(thinkingText, fullText, toolCalls), stopReason, usage))
 		}
 	} else if c != nil {
-		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
-			Type:  "content_block_stop",
-			Index: &blockIndex,
-		}); err != nil {
+		if len(toolCalls) > 0 {
+			markFirstToken()
+			if err := closeBlock(); err != nil {
+				return nil, err
+			}
+			for _, call := range toolCalls {
+				idx := blockIndex
+				input := strings.TrimSpace(call.Arguments)
+				if input == "" {
+					input = "{}"
+				}
+				if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+					Type:  "content_block_start",
+					Index: &idx,
+					ContentBlock: &apicompat.AnthropicContentBlock{
+						Type:  "tool_use",
+						ID:    call.ID,
+						Name:  call.Name,
+						Input: json.RawMessage("{}"),
+					},
+				}); err != nil {
+					return nil, err
+				}
+				if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+					Type:  "content_block_delta",
+					Index: &idx,
+					Delta: &apicompat.AnthropicDelta{
+						Type:        "input_json_delta",
+						PartialJSON: input,
+					},
+				}); err != nil {
+					return nil, err
+				}
+				if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+					Type:  "content_block_stop",
+					Index: &idx,
+				}); err != nil {
+					return nil, err
+				}
+				blockIndex++
+			}
+		} else if fullText != "" {
+			markFirstToken()
+			if err := ensureBlock("text"); err != nil {
+				return nil, err
+			}
+			if toolsEnabled {
+				idx := blockIndex
+				if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+					Type:  "content_block_delta",
+					Index: &idx,
+					Delta: &apicompat.AnthropicDelta{
+						Type: "text_delta",
+						Text: fullText,
+					},
+				}); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := closeBlock(); err != nil {
 			return nil, err
 		}
 		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
 			Type: "message_delta",
 			Delta: &apicompat.AnthropicDelta{
-				StopReason: "end_turn",
+				StopReason: stopReason,
 			},
 			Usage: openAIUsageToAnthropicUsage(usage),
 		}); err != nil {
@@ -501,6 +797,15 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 	}, nil
 }
 
+type windsurfResponsesCallbacks struct {
+	OnText     func(string) error
+	OnThinking func(string) error
+}
+
+type windsurfResponsesRunOptions struct {
+	CascadeToolInstruction string
+}
+
 func (s *OpenAIGatewayService) runWindsurfResponsesRequest(
 	ctx context.Context,
 	account *Account,
@@ -509,8 +814,27 @@ func (s *OpenAIGatewayService) runWindsurfResponsesRequest(
 	modelInfo windsurfModelInfo,
 	onChunk func(string) error,
 ) (OpenAIUsage, string, error) {
+	return s.runWindsurfResponsesRequestWithCallbacks(ctx, account, apiKey, messages, modelInfo, windsurfResponsesCallbacks{
+		OnText: onChunk,
+	}, windsurfResponsesRunOptions{})
+}
+
+func (s *OpenAIGatewayService) runWindsurfResponsesRequestWithCallbacks(
+	ctx context.Context,
+	account *Account,
+	apiKey string,
+	messages []windsurfRawMessage,
+	modelInfo windsurfModelInfo,
+	callbacks windsurfResponsesCallbacks,
+	options windsurfResponsesRunOptions,
+) (OpenAIUsage, string, error) {
 	if strings.TrimSpace(modelInfo.ModelUID) != "" {
-		return runWindsurfCascadeChat(ctx, account, apiKey, messages, modelInfo, onChunk)
+		return runWindsurfCascadeChatWithCallbacks(ctx, account, apiKey, messages, modelInfo, windsurfCascadeCallbacks{
+			OnText:     callbacks.OnText,
+			OnThinking: callbacks.OnThinking,
+		}, windsurfCascadeOptions{
+			ToolInstruction: options.CascadeToolInstruction,
+		})
 	}
 	sessionID := uuid.NewString()
 	protoBody := windsurfBuildRawGetChatMessageRequest(apiKey, messages, modelInfo.EnumValue, modelInfo.Name, sessionID)
@@ -531,7 +855,7 @@ func (s *OpenAIGatewayService) runWindsurfResponsesRequest(
 		}
 		return OpenAIUsage{}, "", fmt.Errorf("windsurf language server returned %d: %s", resp.StatusCode, msg)
 	}
-	return windsurfCollectRawResponse(resp.Body, messages, onChunk)
+	return windsurfCollectRawResponse(resp.Body, messages, callbacks.OnText)
 }
 
 func (s *OpenAIGatewayService) buildWindsurfRawRequest(ctx context.Context, account *Account, protoBody []byte) (*http.Request, *windsurfLSEntry, error) {
@@ -569,7 +893,21 @@ func buildWindsurfRawMessages(req apicompat.ChatCompletionsRequest) []windsurfRa
 		if len(msg.ToolCalls) > 0 {
 			parts := make([]string, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
-				parts = append(parts, fmt.Sprintf("[called tool %s with %s]", tc.Function.Name, tc.Function.Arguments))
+				args := strings.TrimSpace(tc.Function.Arguments)
+				if args == "" {
+					args = "{}"
+				}
+				var parsedArgs any
+				if err := json.Unmarshal([]byte(args), &parsedArgs); err != nil {
+					parsedArgs = map[string]any{"input": args}
+				}
+				payload, _ := json.Marshal(map[string]any{
+					"function_call": map[string]any{
+						"name":      tc.Function.Name,
+						"arguments": parsedArgs,
+					},
+				})
+				parts = append(parts, string(payload))
 			}
 			if content != "" {
 				content += "\n"
@@ -581,6 +919,14 @@ func buildWindsurfRawMessages(req apicompat.ChatCompletionsRequest) []windsurfRa
 		}
 		role := msg.Role
 		if role == "" {
+			role = "user"
+		}
+		if role == "tool" {
+			id := strings.TrimSpace(msg.ToolCallID)
+			if id == "" {
+				id = "unknown"
+			}
+			content = fmt.Sprintf("<tool_result tool_call_id=%q>\n%s\n</tool_result>", id, content)
 			role = "user"
 		}
 		messages = append(messages, windsurfRawMessage{Role: role, Content: content})
@@ -600,6 +946,10 @@ func windsurfResponsesToChatCompletions(req *apicompat.ResponsesRequest) (apicom
 		Stream:          req.Stream,
 		ServiceTier:     req.ServiceTier,
 		ReasoningEffort: "",
+	}
+	out.Tools = windsurfResponsesToolsToChatTools(req.Tools)
+	if len(req.ToolChoice) > 0 {
+		out.ToolChoice = append(json.RawMessage(nil), req.ToolChoice...)
 	}
 	if req.MaxOutputTokens != nil {
 		v := *req.MaxOutputTokens
@@ -702,6 +1052,447 @@ func windsurfResponsesContentText(raw json.RawMessage) string {
 	return ""
 }
 
+func windsurfResponsesToolsToChatTools(tools []apicompat.ResponsesTool) []apicompat.ChatTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]apicompat.ChatTool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "function" || strings.TrimSpace(tool.Name) == "" {
+			continue
+		}
+		out = append(out, apicompat.ChatTool{
+			Type: "function",
+			Function: &apicompat.ChatFunction{
+				Name:        strings.TrimSpace(tool.Name),
+				Description: strings.TrimSpace(tool.Description),
+				Parameters:  append(json.RawMessage(nil), tool.Parameters...),
+				Strict:      tool.Strict,
+			},
+		})
+	}
+	return out
+}
+
+func windsurfJoinSections(parts ...string) string {
+	trimmed := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if s := strings.TrimSpace(part); s != "" {
+			trimmed = append(trimmed, s)
+		}
+	}
+	return strings.Join(trimmed, "\n\n")
+}
+
+func windsurfBuildToolInstruction(tools []apicompat.ChatTool, toolChoice json.RawMessage, model string) string {
+	mode, forceName := windsurfResolveToolChoice(toolChoice)
+	if mode == "none" {
+		return ""
+	}
+	names := windsurfFunctionToolNames(tools)
+	if len(names) == 0 {
+		return ""
+	}
+
+	dialect := windsurfToolDialect(model)
+	var b strings.Builder
+	if dialect == "gpt_native" {
+		b.WriteString("You have access to the following client-side functions. They are real callable tools; the caller will execute them and return results in the next turn.\n\n")
+		b.WriteString("To call a function, output one valid JSON object on a single line, with no markdown and no prose before or after:\n")
+		b.WriteString(`{"function_call":{"name":"<function_name>","arguments":{}}}` + "\n\n")
+	} else {
+		b.WriteString("You have access to the following client-side functions. They are real callable tools; the caller will execute them and return results in the next turn.\n\n")
+		b.WriteString("To call a function, output one block on a single line, with no prose before or after:\n")
+		b.WriteString(`<tool_call>{"name":"<function_name>","arguments":{}}</tool_call>` + "\n\n")
+	}
+	b.WriteString("Rules:\n")
+	b.WriteString("1. If a function is relevant, call it instead of claiming you cannot access files, commands, tools, or live data.\n")
+	b.WriteString("2. Never invent file contents, command outputs, timestamps, or tool results. Tool results come from the caller after your function_call.\n")
+	b.WriteString("3. After emitting the function call, stop generating.\n")
+	if mode == "required" {
+		b.WriteString("4. tool_choice requires at least one function call; do not answer directly.\n")
+	}
+	if forceName != "" {
+		b.WriteString(fmt.Sprintf("5. tool_choice requires the function %q; do not call a different function.\n", forceName))
+	}
+	b.WriteString("\nAvailable functions:\n")
+	for _, tool := range tools {
+		if tool.Type != "function" || tool.Function == nil || strings.TrimSpace(tool.Function.Name) == "" {
+			continue
+		}
+		b.WriteString("\n### ")
+		b.WriteString(strings.TrimSpace(tool.Function.Name))
+		b.WriteByte('\n')
+		if desc := strings.TrimSpace(tool.Function.Description); desc != "" {
+			b.WriteString(desc)
+			b.WriteByte('\n')
+		}
+		if params := windsurfCompactJSON(tool.Function.Parameters); params != "" {
+			b.WriteString("Parameters: ")
+			b.WriteString(params)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+func windsurfBuildToolUserHint(tools []apicompat.ChatTool, toolChoice json.RawMessage, model string) string {
+	mode, forceName := windsurfResolveToolChoice(toolChoice)
+	if mode == "none" {
+		return ""
+	}
+	names := windsurfFunctionToolNames(tools)
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Tools available this turn: ")
+	b.WriteString(strings.Join(names, ", "))
+	b.WriteString(". ")
+	if windsurfToolDialect(model) == "gpt_native" {
+		b.WriteString(`If a tool is needed, output only {"function_call":{"name":"TOOL_NAME","arguments":{...}}}. `)
+	} else {
+		b.WriteString(`If a tool is needed, output only <tool_call>{"name":"TOOL_NAME","arguments":{...}}</tool_call>. `)
+	}
+	if mode == "required" {
+		b.WriteString("At least one tool call is required. ")
+	}
+	if forceName != "" {
+		b.WriteString("Required tool: ")
+		b.WriteString(forceName)
+		b.WriteString(". ")
+	}
+	b.WriteString("Do not say you cannot read files or run commands when a listed tool can do it.")
+	return b.String()
+}
+
+func windsurfInjectToolUserHint(messages []apicompat.ChatMessage, hint string) []apicompat.ChatMessage {
+	hint = strings.TrimSpace(hint)
+	if hint == "" || len(messages) == 0 {
+		return messages
+	}
+	out := append([]apicompat.ChatMessage(nil), messages...)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(kiroChatContentText(out[i].Content))
+		if strings.HasPrefix(text, "<tool_result") {
+			return out
+		}
+		raw, _ := json.Marshal(windsurfJoinSections(hint, text))
+		out[i].Content = raw
+		return out
+	}
+	return out
+}
+
+func windsurfFunctionToolNames(tools []apicompat.ChatTool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "function" || tool.Function == nil {
+			continue
+		}
+		if name := strings.TrimSpace(tool.Function.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func windsurfResolveToolChoice(raw json.RawMessage) (mode, forceName string) {
+	mode = "auto"
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" || string(raw) == "null" {
+		return mode, ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "none":
+			return "none", ""
+		case "required", "any":
+			return "required", ""
+		default:
+			return "auto", ""
+		}
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return mode, ""
+	}
+	if name, _ := obj["name"].(string); strings.TrimSpace(name) != "" {
+		return "required", strings.TrimSpace(name)
+	}
+	if fn, _ := obj["function"].(map[string]any); fn != nil {
+		if name, _ := fn["name"].(string); strings.TrimSpace(name) != "" {
+			return "required", strings.TrimSpace(name)
+		}
+	}
+	if typ, _ := obj["type"].(string); strings.EqualFold(typ, "none") {
+		return "none", ""
+	}
+	return mode, ""
+}
+
+func windsurfToolDialect(model string) string {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if strings.HasPrefix(normalized, "gpt-") || strings.HasPrefix(normalized, "o3") || strings.HasPrefix(normalized, "o4") {
+		return "gpt_native"
+	}
+	return "openai_json_xml"
+}
+
+func windsurfCompactJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return buf.String()
+}
+
+type windsurfParsedToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+type windsurfToolCallCandidate struct {
+	ID        string
+	Name      string
+	Arguments any
+}
+
+func windsurfParseToolCallsFromText(text string, tools []apicompat.ChatTool) ([]windsurfParsedToolCall, string) {
+	available := map[string]string{}
+	for _, name := range windsurfFunctionToolNames(tools) {
+		available[strings.ToLower(name)] = name
+	}
+	validate := func(name string) (string, bool) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", false
+		}
+		if len(available) == 0 {
+			return name, true
+		}
+		actual, ok := available[strings.ToLower(name)]
+		return actual, ok
+	}
+	addCandidate := func(c windsurfToolCallCandidate, calls *[]windsurfParsedToolCall) bool {
+		name, ok := validate(c.Name)
+		if !ok {
+			return false
+		}
+		id := strings.TrimSpace(c.ID)
+		if id == "" {
+			id = "call_" + uuid.NewString()
+		}
+		*calls = append(*calls, windsurfParsedToolCall{
+			ID:        id,
+			Name:      name,
+			Arguments: windsurfToolArgumentsJSON(c.Arguments),
+		})
+		return true
+	}
+
+	var calls []windsurfParsedToolCall
+	cleaned := windsurfParseXMLToolCalls(text, addCandidate, &calls)
+	cleaned = windsurfParseJSONToolCalls(cleaned, addCandidate, &calls)
+	if len(calls) == 0 {
+		return nil, text
+	}
+	return calls, strings.TrimSpace(cleaned)
+}
+
+func windsurfParseXMLToolCalls(text string, add func(windsurfToolCallCandidate, *[]windsurfParsedToolCall) bool, calls *[]windsurfParsedToolCall) string {
+	const openTag = "<tool_call>"
+	const closeTag = "</tool_call>"
+	var out strings.Builder
+	cursor := 0
+	for {
+		startRel := strings.Index(text[cursor:], openTag)
+		if startRel < 0 {
+			out.WriteString(text[cursor:])
+			break
+		}
+		start := cursor + startRel
+		bodyStart := start + len(openTag)
+		endRel := strings.Index(text[bodyStart:], closeTag)
+		if endRel < 0 {
+			out.WriteString(text[cursor:])
+			break
+		}
+		end := bodyStart + endRel
+		out.WriteString(text[cursor:start])
+		body := strings.TrimSpace(text[bodyStart:end])
+		var parsed any
+		added := false
+		if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+			for _, candidate := range windsurfExtractToolCallCandidates(parsed) {
+				if add(candidate, calls) {
+					added = true
+				}
+			}
+		}
+		if !added {
+			out.WriteString(text[start : end+len(closeTag)])
+		}
+		cursor = end + len(closeTag)
+	}
+	return out.String()
+}
+
+func windsurfParseJSONToolCalls(text string, add func(windsurfToolCallCandidate, *[]windsurfParsedToolCall) bool, calls *[]windsurfParsedToolCall) string {
+	working := text
+	for {
+		changed := false
+		for i := 0; i < len(working); i++ {
+			if working[i] != '{' {
+				continue
+			}
+			end := windsurfFindBalancedJSONEnd(working, i)
+			if end < 0 {
+				continue
+			}
+			slice := working[i : end+1]
+			var parsed any
+			if err := json.Unmarshal([]byte(slice), &parsed); err != nil {
+				continue
+			}
+			candidates := windsurfExtractToolCallCandidates(parsed)
+			if len(candidates) == 0 {
+				continue
+			}
+			before := len(*calls)
+			for _, candidate := range candidates {
+				add(candidate, calls)
+			}
+			if len(*calls) == before {
+				continue
+			}
+			working = working[:i] + working[end+1:]
+			changed = true
+			break
+		}
+		if !changed {
+			return working
+		}
+	}
+}
+
+func windsurfExtractToolCallCandidates(parsed any) []windsurfToolCallCandidate {
+	obj, ok := parsed.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if name, _ := obj["name"].(string); strings.TrimSpace(name) != "" {
+		if args, ok := obj["arguments"]; ok {
+			return []windsurfToolCallCandidate{{Name: name, Arguments: args}}
+		}
+	}
+	for _, key := range []string{"function_call", "function"} {
+		if inner, _ := obj[key].(map[string]any); inner != nil {
+			if name, _ := inner["name"].(string); strings.TrimSpace(name) != "" {
+				return []windsurfToolCallCandidate{{
+					Name:      name,
+					Arguments: inner["arguments"],
+				}}
+			}
+		}
+	}
+	if rawCalls, _ := obj["tool_calls"].([]any); len(rawCalls) > 0 {
+		out := make([]windsurfToolCallCandidate, 0, len(rawCalls))
+		for _, raw := range rawCalls {
+			item, _ := raw.(map[string]any)
+			if item == nil {
+				continue
+			}
+			inner, _ := item["function"].(map[string]any)
+			if inner == nil {
+				inner = item
+			}
+			name, _ := inner["name"].(string)
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			id, _ := item["id"].(string)
+			out = append(out, windsurfToolCallCandidate{
+				ID:        id,
+				Name:      name,
+				Arguments: inner["arguments"],
+			})
+		}
+		return out
+	}
+	return nil
+}
+
+func windsurfToolArgumentsJSON(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return "{}"
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return "{}"
+		}
+		var parsed any
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			return trimmed
+		}
+		buf, _ := json.Marshal(map[string]any{"input": trimmed})
+		return string(buf)
+	default:
+		buf, err := json.Marshal(v)
+		if err != nil || string(buf) == "null" {
+			return "{}"
+		}
+		return string(buf)
+	}
+}
+
+func windsurfFindBalancedJSONEnd(s string, start int) int {
+	if start < 0 || start >= len(s) || s[start] != '{' {
+		return -1
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inString {
+			if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return i
+			}
+			if depth < 0 {
+				return -1
+			}
+		}
+	}
+	return -1
+}
+
 func windsurfCollectRawResponse(reader io.Reader, messages []windsurfRawMessage, onChunk func(string) error) (OpenAIUsage, string, error) {
 	var contentBuilder strings.Builder
 	var buffer []byte
@@ -757,18 +1548,54 @@ func windsurfCollectRawResponse(reader io.Reader, messages []windsurfRawMessage,
 }
 
 func buildWindsurfAnthropicResponse(messageID, model, text string, usage OpenAIUsage) *apicompat.AnthropicResponse {
+	return buildWindsurfAnthropicResponseWithBlocks(messageID, model, windsurfBuildAnthropicBlocks("", text, nil), "end_turn", usage)
+}
+
+func buildWindsurfAnthropicResponseWithBlocks(messageID, model string, blocks []apicompat.AnthropicContentBlock, stopReason string, usage OpenAIUsage) *apicompat.AnthropicResponse {
+	if len(blocks) == 0 {
+		blocks = []apicompat.AnthropicContentBlock{{Type: "text", Text: ""}}
+	}
+	if strings.TrimSpace(stopReason) == "" {
+		stopReason = "end_turn"
+	}
 	return &apicompat.AnthropicResponse{
-		ID:   messageID,
-		Type: "message",
-		Role: "assistant",
-		Content: []apicompat.AnthropicContentBlock{{
-			Type: "text",
-			Text: text,
-		}},
+		ID:         messageID,
+		Type:       "message",
+		Role:       "assistant",
+		Content:    blocks,
 		Model:      model,
-		StopReason: "end_turn",
+		StopReason: stopReason,
 		Usage:      *openAIUsageToAnthropicUsage(usage),
 	}
+}
+
+func windsurfBuildAnthropicBlocks(thinkingText, text string, toolCalls []windsurfParsedToolCall) []apicompat.AnthropicContentBlock {
+	blocks := make([]apicompat.AnthropicContentBlock, 0, 2+len(toolCalls))
+	if strings.TrimSpace(thinkingText) != "" {
+		blocks = append(blocks, apicompat.AnthropicContentBlock{
+			Type:     "thinking",
+			Thinking: thinkingText,
+		})
+	}
+	if text != "" {
+		blocks = append(blocks, apicompat.AnthropicContentBlock{
+			Type: "text",
+			Text: text,
+		})
+	}
+	for _, call := range toolCalls {
+		args := strings.TrimSpace(call.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		blocks = append(blocks, apicompat.AnthropicContentBlock{
+			Type:  "tool_use",
+			ID:    call.ID,
+			Name:  call.Name,
+			Input: json.RawMessage(args),
+		})
+	}
+	return blocks
 }
 
 func openAIUsageToAnthropicUsage(usage OpenAIUsage) *apicompat.AnthropicUsage {
@@ -781,6 +1608,54 @@ func openAIUsageToAnthropicUsage(usage OpenAIUsage) *apicompat.AnthropicUsage {
 }
 
 func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usage OpenAIUsage, createdAt int64) *apicompat.ResponsesResponse {
+	return windsurfBuildResponsesResponseWithOutputs(responseID, model, windsurfBuildResponsesOutputs("", "", itemID, text, nil), usage, createdAt)
+}
+
+func windsurfBuildResponsesOutputs(reasoningItemID, reasoningText, messageItemID, text string, toolCalls []windsurfParsedToolCall) []apicompat.ResponsesOutput {
+	output := make([]apicompat.ResponsesOutput, 0, 2+len(toolCalls))
+	if strings.TrimSpace(reasoningText) != "" {
+		if reasoningItemID == "" {
+			reasoningItemID = "rs_" + uuid.NewString()
+		}
+		output = append(output, apicompat.ResponsesOutput{
+			Type:   "reasoning",
+			ID:     reasoningItemID,
+			Status: "completed",
+			Summary: []apicompat.ResponsesSummary{{
+				Type: "summary_text",
+				Text: reasoningText,
+			}},
+		})
+	}
+	if text != "" {
+		if messageItemID == "" {
+			messageItemID = "msg_" + uuid.NewString()
+		}
+		output = append(output, apicompat.ResponsesOutput{
+			Type:   "message",
+			ID:     messageItemID,
+			Role:   "assistant",
+			Status: "completed",
+			Content: []apicompat.ResponsesContentPart{{
+				Type: "output_text",
+				Text: text,
+			}},
+		})
+	}
+	for _, call := range toolCalls {
+		output = append(output, apicompat.ResponsesOutput{
+			Type:      "function_call",
+			ID:        "fc_" + uuid.NewString(),
+			CallID:    call.ID,
+			Name:      call.Name,
+			Arguments: call.Arguments,
+			Status:    "completed",
+		})
+	}
+	return output
+}
+
+func windsurfBuildResponsesResponseWithOutputs(responseID, model string, output []apicompat.ResponsesOutput, usage OpenAIUsage, createdAt int64) *apicompat.ResponsesResponse {
 	if createdAt == 0 {
 		createdAt = time.Now().Unix()
 	}
@@ -790,16 +1665,7 @@ func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usag
 		CreatedAt: createdAt,
 		Model:     model,
 		Status:    "completed",
-		Output: []apicompat.ResponsesOutput{{
-			Type:   "message",
-			ID:     itemID,
-			Role:   "assistant",
-			Status: "completed",
-			Content: []apicompat.ResponsesContentPart{{
-				Type: "output_text",
-				Text: text,
-			}},
-		}},
+		Output:    output,
 		Usage: &apicompat.ResponsesUsage{
 			InputTokens:  usage.InputTokens,
 			OutputTokens: usage.OutputTokens,
@@ -809,11 +1675,15 @@ func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usag
 }
 
 func windsurfBuildResponsesContentPartEvent(eventType string, sequence int, itemID, text string) apicompat.ResponsesStreamEvent {
+	return windsurfBuildResponsesContentPartEventAt(eventType, sequence, 0, itemID, text)
+}
+
+func windsurfBuildResponsesContentPartEventAt(eventType string, sequence, outputIndex int, itemID, text string) apicompat.ResponsesStreamEvent {
 	annotations := []any{}
 	return apicompat.ResponsesStreamEvent{
 		Type:           eventType,
 		SequenceNumber: sequence,
-		OutputIndex:    0,
+		OutputIndex:    outputIndex,
 		ContentIndex:   0,
 		ItemID:         itemID,
 		Part: &apicompat.ResponsesContentPart{
@@ -822,6 +1692,73 @@ func windsurfBuildResponsesContentPartEvent(eventType string, sequence int, item
 			Annotations: &annotations,
 		},
 	}
+}
+
+func windsurfWriteResponsesToolCallEvents(c *gin.Context, calls []windsurfParsedToolCall, sequence *int, nextOutputIndex *int) error {
+	for _, call := range calls {
+		outputIndex := *nextOutputIndex
+		(*nextOutputIndex)++
+		itemID := "fc_" + uuid.NewString()
+		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+			Type:           "response.output_item.added",
+			SequenceNumber: *sequence,
+			OutputIndex:    outputIndex,
+			Item: &apicompat.ResponsesOutput{
+				Type:      "function_call",
+				ID:        itemID,
+				CallID:    call.ID,
+				Name:      call.Name,
+				Arguments: "",
+				Status:    "in_progress",
+			},
+		}); err != nil {
+			return err
+		}
+		(*sequence)++
+		if call.Arguments != "" {
+			if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+				Type:           "response.function_call_arguments.delta",
+				SequenceNumber: *sequence,
+				OutputIndex:    outputIndex,
+				Delta:          call.Arguments,
+				ItemID:         itemID,
+				CallID:         call.ID,
+				Name:           call.Name,
+			}); err != nil {
+				return err
+			}
+			(*sequence)++
+		}
+		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+			Type:           "response.function_call_arguments.done",
+			SequenceNumber: *sequence,
+			OutputIndex:    outputIndex,
+			Arguments:      call.Arguments,
+			ItemID:         itemID,
+			CallID:         call.ID,
+			Name:           call.Name,
+		}); err != nil {
+			return err
+		}
+		(*sequence)++
+		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
+			Type:           "response.output_item.done",
+			SequenceNumber: *sequence,
+			OutputIndex:    outputIndex,
+			Item: &apicompat.ResponsesOutput{
+				Type:      "function_call",
+				ID:        itemID,
+				CallID:    call.ID,
+				Name:      call.Name,
+				Arguments: call.Arguments,
+				Status:    "completed",
+			},
+		}); err != nil {
+			return err
+		}
+		(*sequence)++
+	}
+	return nil
 }
 
 func writeWindsurfResponsesEvent(c *gin.Context, evt apicompat.ResponsesStreamEvent) error {
