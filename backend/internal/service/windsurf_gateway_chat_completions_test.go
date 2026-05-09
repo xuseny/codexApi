@@ -55,6 +55,18 @@ func TestWindsurfResponsesToChatCompletions_MessageArrayInput(t *testing.T) {
 }
 
 func TestWindsurfResponsesContentPartEventsSerialize(t *testing.T) {
+	itemSSE, err := apicompat.ResponsesEventToSSE(apicompat.ResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: 0,
+		Item: &apicompat.ResponsesOutput{
+			Type: "message",
+			ID:   "msg_test",
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, itemSSE, "event: response.output_item.added")
+	require.Contains(t, itemSSE, `"output_index":0`)
+
 	added := windsurfBuildResponsesContentPartEvent("response.content_part.added", 2, "msg_test", "")
 	require.Equal(t, "response.content_part.added", added.Type)
 	require.Equal(t, 2, added.SequenceNumber)
@@ -66,7 +78,20 @@ func TestWindsurfResponsesContentPartEventsSerialize(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, addedSSE, "event: response.content_part.added")
 	require.Contains(t, addedSSE, `"item_id":"msg_test"`)
-	require.Contains(t, addedSSE, `"part":{"type":"output_text"`)
+	require.Contains(t, addedSSE, `"output_index":0`)
+	require.Contains(t, addedSSE, `"content_index":0`)
+	require.Contains(t, addedSSE, `"type":"output_text"`)
+
+	deltaSSE, err := apicompat.ResponsesEventToSSE(apicompat.ResponsesStreamEvent{
+		Type:         "response.output_text.delta",
+		OutputIndex:  0,
+		ContentIndex: 0,
+		ItemID:       "msg_test",
+		Delta:        "he",
+	})
+	require.NoError(t, err)
+	require.Contains(t, deltaSSE, `"output_index":0`)
+	require.Contains(t, deltaSSE, `"content_index":0`)
 
 	done := windsurfBuildResponsesContentPartEvent("response.content_part.done", 5, "msg_test", "hello")
 	require.Equal(t, "hello", done.Part.Text)

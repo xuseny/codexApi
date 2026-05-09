@@ -207,11 +207,66 @@ func FinalizeAnthropicResponsesStream(state *AnthropicEventToResponsesState) []R
 
 // ResponsesEventToSSE formats a ResponsesStreamEvent as an SSE data line.
 func ResponsesEventToSSE(evt ResponsesStreamEvent) (string, error) {
-	data, err := json.Marshal(evt)
+	data, err := json.Marshal(responsesStreamEventPayload(evt))
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("event: %s\ndata: %s\n\n", evt.Type, data), nil
+}
+
+func responsesStreamEventPayload(evt ResponsesStreamEvent) map[string]any {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return map[string]any{"type": evt.Type}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return map[string]any{"type": evt.Type}
+	}
+	if responsesEventNeedsOutputIndex(evt.Type) {
+		payload["output_index"] = evt.OutputIndex
+	}
+	if responsesEventNeedsContentIndex(evt.Type) {
+		payload["content_index"] = evt.ContentIndex
+	}
+	if evt.SequenceNumber >= 0 {
+		payload["sequence_number"] = evt.SequenceNumber
+	}
+	return payload
+}
+
+func responsesEventNeedsOutputIndex(eventType string) bool {
+	switch eventType {
+	case "response.output_item.added",
+		"response.output_item.done",
+		"response.content_part.added",
+		"response.content_part.done",
+		"response.output_text.delta",
+		"response.output_text.done",
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.reasoning_summary_text.delta",
+		"response.reasoning_summary_text.done",
+		"response.reasoning_text.delta",
+		"response.reasoning_text.done":
+		return true
+	default:
+		return false
+	}
+}
+
+func responsesEventNeedsContentIndex(eventType string) bool {
+	switch eventType {
+	case "response.content_part.added",
+		"response.content_part.done",
+		"response.output_text.delta",
+		"response.output_text.done",
+		"response.reasoning_text.delta",
+		"response.reasoning_text.done":
+		return true
+	default:
+		return false
+	}
 }
 
 // --- internal handlers ---

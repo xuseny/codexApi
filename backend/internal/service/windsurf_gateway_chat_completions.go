@@ -195,6 +195,7 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 
 	responseID := "resp_" + uuid.NewString()
 	itemID := "msg_" + uuid.NewString()
+	createdAt := time.Now().Unix()
 	var firstTokenMs *int
 	var contentBuilder strings.Builder
 
@@ -206,11 +207,12 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 			Type:           "response.created",
 			SequenceNumber: 0,
 			Response: &apicompat.ResponsesResponse{
-				ID:     responseID,
-				Object: "response",
-				Model:  originalModel,
-				Status: "in_progress",
-				Output: []apicompat.ResponsesOutput{},
+				ID:        responseID,
+				Object:    "response",
+				CreatedAt: createdAt,
+				Model:     originalModel,
+				Status:    "in_progress",
+				Output:    []apicompat.ResponsesOutput{},
 			},
 		}); err != nil {
 			return nil, err
@@ -278,7 +280,7 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	if !responsesReq.Stream {
 		contentBuilder.WriteString(text)
 		if c != nil {
-			c.JSON(http.StatusOK, windsurfBuildResponsesResponse(responseID, itemID, originalModel, text, usage))
+			c.JSON(http.StatusOK, windsurfBuildResponsesResponse(responseID, itemID, originalModel, text, usage, createdAt))
 		}
 	} else if c != nil {
 		fullText := contentBuilder.String()
@@ -323,7 +325,7 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 		if err := writeWindsurfResponsesEvent(c, apicompat.ResponsesStreamEvent{
 			Type:           "response.completed",
 			SequenceNumber: sequence,
-			Response:       windsurfBuildResponsesResponse(responseID, itemID, originalModel, fullText, usage),
+			Response:       windsurfBuildResponsesResponse(responseID, itemID, originalModel, fullText, usage, createdAt),
 		}); err != nil {
 			return nil, err
 		}
@@ -601,12 +603,16 @@ func windsurfCollectRawResponse(reader io.Reader, messages []windsurfRawMessage,
 	}, text, nil
 }
 
-func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usage OpenAIUsage) *apicompat.ResponsesResponse {
+func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usage OpenAIUsage, createdAt int64) *apicompat.ResponsesResponse {
+	if createdAt == 0 {
+		createdAt = time.Now().Unix()
+	}
 	return &apicompat.ResponsesResponse{
-		ID:     responseID,
-		Object: "response",
-		Model:  model,
-		Status: "completed",
+		ID:        responseID,
+		Object:    "response",
+		CreatedAt: createdAt,
+		Model:     model,
+		Status:    "completed",
 		Output: []apicompat.ResponsesOutput{{
 			Type:   "message",
 			ID:     itemID,
