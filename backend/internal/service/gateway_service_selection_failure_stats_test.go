@@ -139,3 +139,28 @@ func TestDiagnoseSelectionFailure_ModelRateLimitedDetail(t *testing.T) {
 		t.Fatalf("detail=%s want contains remaining=", diagnosis.Detail)
 	}
 }
+
+func TestDiagnoseSelectionFailure_WindsurfAnthropicBridgeUsesRoutingRules(t *testing.T) {
+	svc := &GatewayService{}
+	acc := &Account{
+		ID:          9,
+		Platform:    PlatformWindsurf,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"windsurf_builtin": true,
+		},
+	}
+
+	withoutBridge := svc.diagnoseSelectionFailure(context.Background(), acc, "claude-opus-4-7", PlatformAnthropic, map[int64]struct{}{}, true)
+	if withoutBridge.Category != "platform_filtered" {
+		t.Fatalf("category=%s want=platform_filtered", withoutBridge.Category)
+	}
+
+	ctx := WithWindsurfAnthropicMessagesRouting(context.Background(), true)
+	withBridge := svc.diagnoseSelectionFailure(ctx, acc, "claude-opus-4-7", PlatformAnthropic, map[int64]struct{}{}, true)
+	if withBridge.Category != "eligible" {
+		t.Fatalf("category=%s want=eligible", withBridge.Category)
+	}
+}

@@ -1860,6 +1860,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	if len(candidates) == 0 {
+		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, useMixed)
+		if stats.Total > 0 {
+			return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
+		}
 		return nil, ErrNoAvailableAccounts
 	}
 
@@ -1944,7 +1948,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 		})
 	}
-	stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, false)
+	stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, useMixed)
 	if stats.Total > 0 {
 		return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
 	}
@@ -3410,16 +3414,22 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 }
 
 type selectionFailureStats struct {
-	Total              int
-	Eligible           int
-	Excluded           int
-	Unschedulable      int
-	PlatformFiltered   int
-	ModelUnsupported   int
-	ModelRateLimited   int
-	SamplePlatformIDs  []int64
-	SampleMappingIDs   []int64
-	SampleRateLimitIDs []string
+	Total               int
+	Eligible            int
+	Excluded            int
+	Unschedulable       int
+	PlatformFiltered    int
+	ModelUnsupported    int
+	ModelRateLimited    int
+	QuotaBlocked        int
+	WindowCostBlocked   int
+	RPMBlocked          int
+	SamplePlatformIDs   []int64
+	SampleMappingIDs    []int64
+	SampleRateLimitIDs  []string
+	SampleQuotaIDs      []int64
+	SampleWindowCostIDs []int64
+	SampleRPMBlockedIDs []int64
 }
 
 type selectionFailureDiagnosis struct {
@@ -3568,11 +3578,12 @@ func (s *GatewayService) logDetailedSelectionFailure(
 	stats := s.collectSelectionFailureStats(ctx, accounts, requestedModel, platform, excludedIDs, allowMixedScheduling)
 	logger.LegacyPrintf(
 		"service.gateway",
-		"[SelectAccountDetailed] group_id=%v model=%s platform=%s session=%s total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d sample_platform_filtered=%v sample_model_unsupported=%v sample_model_rate_limited=%v",
+		"[SelectAccountDetailed] group_id=%v model=%s platform=%s session=%s allow_mixed=%t total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d quota_blocked=%d window_cost_blocked=%d rpm_blocked=%d sample_platform_filtered=%v sample_model_unsupported=%v sample_model_rate_limited=%v sample_quota_blocked=%v sample_window_cost_blocked=%v sample_rpm_blocked=%v",
 		derefGroupID(groupID),
 		requestedModel,
 		platform,
 		shortSessionHash(sessionHash),
+		allowMixedScheduling,
 		stats.Total,
 		stats.Eligible,
 		stats.Excluded,
@@ -3580,9 +3591,15 @@ func (s *GatewayService) logDetailedSelectionFailure(
 		stats.PlatformFiltered,
 		stats.ModelUnsupported,
 		stats.ModelRateLimited,
+		stats.QuotaBlocked,
+		stats.WindowCostBlocked,
+		stats.RPMBlocked,
 		stats.SamplePlatformIDs,
 		stats.SampleMappingIDs,
 		stats.SampleRateLimitIDs,
+		stats.SampleQuotaIDs,
+		stats.SampleWindowCostIDs,
+		stats.SampleRPMBlockedIDs,
 	)
 	return stats
 }
@@ -3617,6 +3634,15 @@ func (s *GatewayService) collectSelectionFailureStats(
 			stats.ModelRateLimited++
 			remaining := acc.GetRateLimitRemainingTimeWithContext(ctx, requestedModel).Truncate(time.Second)
 			stats.SampleRateLimitIDs = appendSelectionFailureRateSample(stats.SampleRateLimitIDs, acc.ID, remaining)
+		case "quota_blocked":
+			stats.QuotaBlocked++
+			stats.SampleQuotaIDs = appendSelectionFailureSampleID(stats.SampleQuotaIDs, acc.ID)
+		case "window_cost_blocked":
+			stats.WindowCostBlocked++
+			stats.SampleWindowCostIDs = appendSelectionFailureSampleID(stats.SampleWindowCostIDs, acc.ID)
+		case "rpm_blocked":
+			stats.RPMBlocked++
+			stats.SampleRPMBlockedIDs = appendSelectionFailureSampleID(stats.SampleRPMBlockedIDs, acc.ID)
 		default:
 			stats.Eligible++
 		}
@@ -3642,7 +3668,7 @@ func (s *GatewayService) diagnoseSelectionFailure(
 	if !s.isAccountSchedulableForSelection(acc) {
 		return selectionFailureDiagnosis{Category: "unschedulable", Detail: "generic_unschedulable"}
 	}
-	if isPlatformFilteredForSelection(acc, platform, allowMixedScheduling) {
+	if !s.isAccountAllowedForPlatform(ctx, acc, platform, allowMixedScheduling) {
 		return selectionFailureDiagnosis{
 			Category: "platform_filtered",
 			Detail:   fmt.Sprintf("account_platform=%s requested_platform=%s", acc.Platform, strings.TrimSpace(platform)),
@@ -3660,6 +3686,15 @@ func (s *GatewayService) diagnoseSelectionFailure(
 			Category: "model_rate_limited",
 			Detail:   fmt.Sprintf("remaining=%s", remaining),
 		}
+	}
+	if !s.isAccountSchedulableForQuota(acc) {
+		return selectionFailureDiagnosis{Category: "quota_blocked"}
+	}
+	if !s.isAccountSchedulableForWindowCost(ctx, acc, false) {
+		return selectionFailureDiagnosis{Category: "window_cost_blocked"}
+	}
+	if !s.isAccountSchedulableForRPM(ctx, acc, false) {
+		return selectionFailureDiagnosis{Category: "rpm_blocked"}
 	}
 	return selectionFailureDiagnosis{Category: "eligible"}
 }
@@ -3698,7 +3733,7 @@ func appendSelectionFailureRateSample(samples []string, accountID int64, remaini
 
 func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 	return fmt.Sprintf(
-		"total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d",
+		"total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d quota_blocked=%d window_cost_blocked=%d rpm_blocked=%d",
 		stats.Total,
 		stats.Eligible,
 		stats.Excluded,
@@ -3706,6 +3741,9 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 		stats.PlatformFiltered,
 		stats.ModelUnsupported,
 		stats.ModelRateLimited,
+		stats.QuotaBlocked,
+		stats.WindowCostBlocked,
+		stats.RPMBlocked,
 	)
 }
 
