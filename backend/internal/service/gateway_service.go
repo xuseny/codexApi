@@ -3579,6 +3579,12 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 // isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
 // 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
 func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	if account.IsWindsurfBuiltinOAuth() {
+		return windsurfBuiltinAccountSupportsRequestedModel(account, requestedModel)
+	}
 	if account.Platform == PlatformAntigravity {
 		if strings.TrimSpace(requestedModel) == "" {
 			return true
@@ -3603,6 +3609,12 @@ func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Contex
 
 // isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）
 func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	if account.IsWindsurfBuiltinOAuth() {
+		return windsurfBuiltinAccountSupportsRequestedModel(account, requestedModel)
+	}
 	if account.Platform == PlatformAntigravity {
 		if strings.TrimSpace(requestedModel) == "" {
 			return true
@@ -3623,6 +3635,25 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	}
 	// 其他平台使用账户的模型支持检查
 	return account.IsModelSupported(requestedModel)
+}
+
+func windsurfBuiltinAccountSupportsRequestedModel(account *Account, requestedModel string) bool {
+	if account == nil {
+		return false
+	}
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return true
+	}
+	mapping := account.GetModelMapping()
+	if len(mapping) == 0 {
+		return IsWindsurfBuiltinModel(requestedModel)
+	}
+	mappedModel, matched := account.ResolveMappedModel(requestedModel)
+	if !matched || strings.TrimSpace(mappedModel) == "" {
+		return false
+	}
+	return IsWindsurfBuiltinModel(mappedModel)
 }
 
 // GetAccessToken 获取账号凭证

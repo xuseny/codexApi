@@ -462,23 +462,26 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 	}
 
 	var firstErr error
-	if err := s.rebuildBucketsForPlatform(ctx, account.Platform, groupIDs, reason, seen); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	if account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled() {
-		if err := s.rebuildBucketsForPlatform(ctx, PlatformAnthropic, groupIDs, reason, seen); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		if err := s.rebuildBucketsForPlatform(ctx, PlatformGemini, groupIDs, reason, seen); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if account.Platform == PlatformWindsurf {
-		if err := s.rebuildBucketsForPlatform(ctx, PlatformOpenAI, groupIDs, reason, seen); err != nil && firstErr == nil {
+	for _, platform := range schedulerPlatformsForAccountRebuild(account) {
+		if err := s.rebuildBucketsForPlatform(ctx, platform, groupIDs, reason, seen); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+func schedulerPlatformsForAccountRebuild(account *Account) []string {
+	if account == nil || account.Platform == "" {
+		return nil
+	}
+	platforms := []string{account.Platform}
+	if account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled() {
+		platforms = append(platforms, PlatformAnthropic, PlatformGemini)
+	}
+	if account.Platform == PlatformWindsurf {
+		platforms = append(platforms, PlatformOpenAI, PlatformAnthropic)
+	}
+	return dedupeStrings(platforms)
 }
 
 func (s *SchedulerSnapshotService) rebuildByGroupIDs(ctx context.Context, groupIDs []int64, reason string, seen map[batchSeenKey]struct{}) error {
