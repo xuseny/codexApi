@@ -1843,7 +1843,7 @@
 
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="isOpenAICompatibleOAuthAccount"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -3639,6 +3639,10 @@ const openAIWSModeConcurrencyHintKey = computed(() =>
 
 const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
+)
+const isOpenAICompatibleOAuthAccount = computed(() =>
+  accountCategory.value === 'oauth-based' &&
+  (form.platform === 'openai' || form.platform === 'windsurf')
 )
 
 const mixedChannelWarningMessageText = computed(() => {
