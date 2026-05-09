@@ -345,6 +345,25 @@ var (
 // ErrNoAvailableAccounts 表示没有可用的账号
 var ErrNoAvailableAccounts = errors.New("no available accounts")
 
+type windsurfAnthropicMessagesRoutingKey struct{}
+
+func WithWindsurfAnthropicMessagesRouting(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, windsurfAnthropicMessagesRoutingKey{}, enabled)
+}
+
+func IsWindsurfAnthropicMessagesRouting(ctx context.Context) bool {
+	enabled, _ := ctx.Value(windsurfAnthropicMessagesRoutingKey{}).(bool)
+	return enabled
+}
+
+func mixedSchedulingQueryPlatforms(platform string) []string {
+	platforms := []string{platform, PlatformAntigravity}
+	if platform == PlatformAnthropic {
+		platforms = append(platforms, PlatformWindsurf)
+	}
+	return platforms
+}
+
 // ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
 var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 
@@ -1545,7 +1564,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				}
 				continue
 			}
-			if !s.isAccountAllowedForPlatform(account, platform, useMixed) {
+			if !s.isAccountAllowedForPlatform(ctx, account, platform, useMixed) {
 				filteredPlatform++
 				continue
 			}
@@ -1593,7 +1612,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						var stickyCacheMissReason string
 
 						gatePass := s.isAccountSchedulableForSelection(stickyAccount) &&
-							s.isAccountAllowedForPlatform(stickyAccount, platform, useMixed) &&
+							s.isAccountAllowedForPlatform(ctx, stickyAccount, platform, useMixed) &&
 							(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, stickyAccount, requestedModel)) &&
 							s.isAccountSchedulableForModelSelection(ctx, stickyAccount, requestedModel) &&
 							s.isAccountSchedulableForQuota(stickyAccount) &&
@@ -1763,7 +1782,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 				}
 				if !clearSticky && s.isAccountInGroup(account, groupID) &&
-					s.isAccountAllowedForPlatform(account, platform, useMixed) &&
+					s.isAccountAllowedForPlatform(ctx, account, platform, useMixed) &&
 					(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) &&
 					s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) &&
 					s.isAccountSchedulableForQuota(account) &&
@@ -1815,7 +1834,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.isAccountSchedulableForSelection(acc) {
 			continue
 		}
-		if !s.isAccountAllowedForPlatform(acc, platform, useMixed) {
+		if !s.isAccountAllowedForPlatform(ctx, acc, platform, useMixed) {
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
@@ -2117,7 +2136,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
-		platforms := []string{platform, PlatformAntigravity}
+		platforms := mixedSchedulingQueryPlatforms(platform)
 		var accounts []Account
 		var err error
 		if groupID != nil {
@@ -2202,9 +2221,12 @@ func (s *GatewayService) IsSingleAntigravityAccountGroup(ctx context.Context, gr
 	return len(accounts) == 1
 }
 
-func (s *GatewayService) isAccountAllowedForPlatform(account *Account, platform string, useMixed bool) bool {
+func (s *GatewayService) isAccountAllowedForPlatform(ctx context.Context, account *Account, platform string, useMixed bool) bool {
 	if account == nil {
 		return false
+	}
+	if platform == PlatformAnthropic && IsWindsurfAnthropicMessagesRouting(ctx) && account.IsWindsurfBuiltinOAuth() {
+		return true
 	}
 	if useMixed {
 		if account.Platform == platform {

@@ -84,6 +84,7 @@ describe('UseKeyModal', () => {
     expect(config.provider.anthropic.npm).toBe('@ai-sdk/anthropic')
     expect(config.provider.anthropic.models['claude-opus-4-7'].tool_call).toBe(true)
     expect(config.provider.anthropic.models['claude-opus-4-7'].reasoning).toBe(true)
+    expect(config.provider.anthropic.models['claude-opus-4-7-xhigh']).toBeUndefined()
   })
 
   it('does not render Anthropic provider in normal OpenAI OpenCode config', async () => {
@@ -103,6 +104,7 @@ describe('UseKeyModal', () => {
     const config = JSON.parse(wrapper.find('pre code').text())
     expect(config.provider.openai.models['gpt-5.5'].tool_call).toBe(true)
     expect(config.provider.anthropic.models['claude-sonnet-4-6'].tool_call).toBe(true)
+    expect(config.provider.anthropic.models['claude-opus-4-7-xhigh'].tool_call).toBe(true)
     expect(config.provider.anthropic.options.baseURL).toBe('https://example.com/v1')
   })
 
@@ -115,5 +117,7 @@ describe('UseKeyModal', () => {
     expect(config.provider.anthropic.models['claude-opus-4-7'].reasoning).toBe(true)
     expect(config.provider.anthropic.models['claude-opus-4-7'].tool_call).toBe(true)
     expect(config.provider.anthropic.models['claude-opus-4-7'].variants.high.thinking.budgetTokens).toBe(24576)
+    expect(config.provider.anthropic.models['claude-opus-4-7-xhigh']).toBeUndefined()
+    expect(config.provider.anthropic.models['claude-opus-4-5-20251101'].tool_call).toBe(true)
   })
 })

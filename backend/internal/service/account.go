@@ -1017,6 +1017,13 @@ func (a *Account) IsWindsurf() bool {
 	return a.Platform == PlatformWindsurf
 }
 
+func (a *Account) IsWindsurfBuiltinOAuth() bool {
+	return a != nil &&
+		a.Platform == PlatformWindsurf &&
+		a.Type == AccountTypeOAuth &&
+		a.GetCredentialBool("windsurf_builtin")
+}
+
 func (a *Account) IsKiro() bool {
 	return a.Platform == PlatformKiro
 }

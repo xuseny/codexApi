@@ -39,6 +39,7 @@ type GatewayHandler struct {
 	gatewayService            *service.GatewayService
 	geminiCompatService       *service.GeminiMessagesCompatService
 	antigravityGatewayService *service.AntigravityGatewayService
+	openAIGatewayService      *service.OpenAIGatewayService
 	userService               *service.UserService
 	billingCacheService       *service.BillingCacheService
 	usageService              *service.UsageService
@@ -58,6 +59,7 @@ func NewGatewayHandler(
 	gatewayService *service.GatewayService,
 	geminiCompatService *service.GeminiMessagesCompatService,
 	antigravityGatewayService *service.AntigravityGatewayService,
+	openAIGatewayService *service.OpenAIGatewayService,
 	userService *service.UserService,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
@@ -92,6 +94,7 @@ func NewGatewayHandler(
 		gatewayService:            gatewayService,
 		geminiCompatService:       geminiCompatService,
 		antigravityGatewayService: antigravityGatewayService,
+		openAIGatewayService:      openAIGatewayService,
 		userService:               userService,
 		billingCacheService:       billingCacheService,
 		usageService:              usageService,
@@ -277,6 +280,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	sessionKey := sessionHash
 	if platform == service.PlatformGemini && sessionHash != "" {
 		sessionKey = "gemini:" + sessionHash
+	}
+	if platform == service.PlatformAnthropic {
+		c.Request = c.Request.WithContext(service.WithWindsurfAnthropicMessagesRouting(c.Request.Context(), true))
 	}
 
 	// 查询粘性会话绑定的账号 ID
@@ -715,7 +721,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
+			if account.IsWindsurfBuiltinOAuth() {
+				if h.openAIGatewayService == nil {
+					err = errors.New("openai gateway service is not configured for windsurf anthropic bridge")
+				} else {
+					openAIResult, forwardErr := h.openAIGatewayService.ForwardAsAnthropic(requestCtx, c, account, body, "", "")
+					result = convertOpenAIForwardResultToForwardResult(openAIResult)
+					err = forwardErr
+				}
+			} else if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)

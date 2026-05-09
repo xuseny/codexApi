@@ -1094,7 +1094,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       }
     }
   }
-  const claudeModels = {
+  const windsurfClaudeModels = {
     'claude-opus-4-7': {
       name: 'Claude Opus 4.7',
       limit: {
@@ -1240,20 +1240,89 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       }
     }
   }
+  const nativeClaudeModels = {
+    'claude-opus-4-7': {
+      name: 'Claude Opus 4.7',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-6': {
+      name: 'Claude Opus 4.6',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-opus-4-5-20251101': {
+      name: 'Claude Opus 4.5',
+      limit: {
+        context: 200000,
+        output: 128000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-sonnet-4-6': {
+      name: 'Claude Sonnet 4.6',
+      limit: {
+        context: 200000,
+        output: 64000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-sonnet-4-5-20250929': {
+      name: 'Claude Sonnet 4.5',
+      limit: {
+        context: 200000,
+        output: 64000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    },
+    'claude-haiku-4-5-20251001': {
+      name: 'Claude Haiku 4.5',
+      limit: {
+        context: 200000,
+        output: 64000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      }
+    }
+  }
 
   const configuredOpenAIModels = applyOpenCodeOpenAICapabilities(openaiModels)
-  const configuredClaudeModels = applyOpenCodeClaudeCapabilities(claudeModels)
+  const configuredNativeClaudeModels = applyOpenCodeClaudeCapabilities(nativeClaudeModels)
+  const configuredWindsurfClaudeModels = applyOpenCodeClaudeCapabilities(windsurfClaudeModels)
 
   if (platform === 'gemini') {
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].models = geminiModels
   } else if (platform === 'anthropic') {
     provider[platform].npm = '@ai-sdk/anthropic'
-    provider[platform].models = configuredClaudeModels
+    provider[platform].models = configuredNativeClaudeModels
   } else if (platform === 'antigravity-claude') {
     provider[platform].npm = '@ai-sdk/anthropic'
     provider[platform].name = 'Antigravity (Claude)'
-    provider[platform].models = configuredClaudeModels
+    provider[platform].models = configuredNativeClaudeModels
   } else if (platform === 'antigravity-gemini') {
     provider[platform].npm = '@ai-sdk/google'
     provider[platform].name = 'Antigravity (Gemini)'
@@ -1263,7 +1332,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     if (includeAnthropicProvider) {
       const anthropicProvider = addProvider('anthropic')
       anthropicProvider.npm = '@ai-sdk/anthropic'
-      anthropicProvider.models = configuredClaudeModels
+      anthropicProvider.models = configuredNativeClaudeModels
     }
   } else if (platform === 'windsurf') {
     const openaiProvider = addProvider('openai')
@@ -1271,7 +1340,7 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
 
     const anthropicProvider = addProvider('anthropic')
     anthropicProvider.npm = '@ai-sdk/anthropic'
-    anthropicProvider.models = configuredClaudeModels
+    anthropicProvider.models = configuredWindsurfClaudeModels
   }
 
   const agent =
