@@ -174,6 +174,26 @@ var windsurfModelAliases = map[string]string{
 	"swe-1-6-fast":               "swe-1.6-fast",
 }
 
+func normalizeWindsurfModelAlias(model string) string {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return ""
+	}
+	if alias := windsurfModelAliases[normalized]; alias != "" {
+		return alias
+	}
+	return normalized
+}
+
+func IsWindsurfBuiltinModel(model string) bool {
+	normalized := normalizeWindsurfModelAlias(model)
+	if normalized == "" {
+		return false
+	}
+	_, ok := windsurfRawModels[normalized]
+	return ok
+}
+
 func buildWindsurfModelLookup() map[string]windsurfModelInfo {
 	lookup := make(map[string]windsurfModelInfo, len(windsurfModelCatalog)*3)
 	for _, entry := range windsurfModelCatalog {

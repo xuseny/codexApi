@@ -348,6 +348,159 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	}, nil
 }
 
+func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+) (*OpenAIForwardResult, error) {
+	if account == nil {
+		return nil, errors.New("nil account")
+	}
+	startTime := time.Now()
+
+	var anthropicReq apicompat.AnthropicRequest
+	if err := json.Unmarshal(body, &anthropicReq); err != nil {
+		return nil, fmt.Errorf("parse anthropic request: %w", err)
+	}
+	originalModel := strings.TrimSpace(anthropicReq.Model)
+	if originalModel == "" {
+		return nil, errors.New("windsurf anthropic request requires model")
+	}
+
+	responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("convert anthropic request: %w", err)
+	}
+	responsesReq.Model = originalModel
+	responsesReq.Stream = anthropicReq.Stream
+
+	chatReq, err := windsurfResponsesToChatCompletions(responsesReq)
+	if err != nil {
+		return nil, err
+	}
+	messages := buildWindsurfRawMessages(chatReq)
+	if len(messages) == 0 {
+		return nil, errors.New("windsurf anthropic request requires at least one message")
+	}
+
+	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
+	modelInfo, upstreamModel, err := resolveWindsurfModel(billingModel, originalModel)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, _, err := s.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("get windsurf api key: %w", err)
+	}
+
+	messageID := "msg_" + uuid.NewString()
+	blockIndex := 0
+	var firstTokenMs *int
+	if anthropicReq.Stream && c != nil {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type: "message_start",
+			Message: &apicompat.AnthropicResponse{
+				ID:      messageID,
+				Type:    "message",
+				Role:    "assistant",
+				Content: []apicompat.AnthropicContentBlock{},
+				Model:   originalModel,
+				Usage:   apicompat.AnthropicUsage{},
+			},
+		}); err != nil {
+			return nil, err
+		}
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:  "content_block_start",
+			Index: &blockIndex,
+			ContentBlock: &apicompat.AnthropicContentBlock{
+				Type: "text",
+				Text: "",
+			},
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	var textBuilder strings.Builder
+	onChunk := func(text string) error {
+		if text == "" {
+			return nil
+		}
+		if firstTokenMs == nil {
+			v := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &v
+		}
+		textBuilder.WriteString(text)
+		if !anthropicReq.Stream || c == nil {
+			return nil
+		}
+		return writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:  "content_block_delta",
+			Index: &blockIndex,
+			Delta: &apicompat.AnthropicDelta{
+				Type: "text_delta",
+				Text: text,
+			},
+		})
+	}
+	if !anthropicReq.Stream {
+		onChunk = nil
+	}
+
+	usage, text, err := s.runWindsurfResponsesRequest(ctx, account, apiKey, messages, modelInfo, onChunk)
+	if err != nil {
+		if c != nil && !anthropicReq.Stream {
+			writeAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
+		}
+		return nil, err
+	}
+
+	if !anthropicReq.Stream {
+		if c != nil {
+			c.JSON(http.StatusOK, buildWindsurfAnthropicResponse(messageID, originalModel, text, usage))
+		}
+	} else if c != nil {
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type:  "content_block_stop",
+			Index: &blockIndex,
+		}); err != nil {
+			return nil, err
+		}
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{
+			Type: "message_delta",
+			Delta: &apicompat.AnthropicDelta{
+				StopReason: "end_turn",
+			},
+			Usage: openAIUsageToAnthropicUsage(usage),
+		}); err != nil {
+			return nil, err
+		}
+		if err := writeWindsurfAnthropicEvent(c, apicompat.AnthropicStreamEvent{Type: "message_stop"}); err != nil {
+			return nil, err
+		}
+	}
+
+	return &OpenAIForwardResult{
+		RequestID:       "",
+		Usage:           usage,
+		Model:           originalModel,
+		BillingModel:    billingModel,
+		UpstreamModel:   upstreamModel,
+		ServiceTier:     extractOpenAIServiceTierFromBody(body),
+		ReasoningEffort: extractCCReasoningEffortFromBody(body),
+		Stream:          anthropicReq.Stream,
+		OpenAIWSMode:    false,
+		Duration:        time.Since(startTime),
+		FirstTokenMs:    firstTokenMs,
+	}, nil
+}
+
 func (s *OpenAIGatewayService) runWindsurfResponsesRequest(
 	ctx context.Context,
 	account *Account,
@@ -603,6 +756,30 @@ func windsurfCollectRawResponse(reader io.Reader, messages []windsurfRawMessage,
 	}, text, nil
 }
 
+func buildWindsurfAnthropicResponse(messageID, model, text string, usage OpenAIUsage) *apicompat.AnthropicResponse {
+	return &apicompat.AnthropicResponse{
+		ID:   messageID,
+		Type: "message",
+		Role: "assistant",
+		Content: []apicompat.AnthropicContentBlock{{
+			Type: "text",
+			Text: text,
+		}},
+		Model:      model,
+		StopReason: "end_turn",
+		Usage:      *openAIUsageToAnthropicUsage(usage),
+	}
+}
+
+func openAIUsageToAnthropicUsage(usage OpenAIUsage) *apicompat.AnthropicUsage {
+	return &apicompat.AnthropicUsage{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	}
+}
+
 func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usage OpenAIUsage, createdAt int64) *apicompat.ResponsesResponse {
 	if createdAt == 0 {
 		createdAt = time.Now().Unix()
@@ -662,14 +839,26 @@ func writeWindsurfResponsesEvent(c *gin.Context, evt apicompat.ResponsesStreamEv
 	return nil
 }
 
+func writeWindsurfAnthropicEvent(c *gin.Context, evt apicompat.AnthropicStreamEvent) error {
+	if c == nil {
+		return nil
+	}
+	line, err := apicompat.ResponsesAnthropicEventToSSE(evt)
+	if err != nil {
+		return err
+	}
+	if _, err := c.Writer.Write([]byte(line)); err != nil {
+		return err
+	}
+	c.Writer.Flush()
+	return nil
+}
+
 func resolveWindsurfModel(candidates ...string) (windsurfModelInfo, string, error) {
 	for _, candidate := range candidates {
-		normalized := strings.ToLower(strings.TrimSpace(candidate))
+		normalized := normalizeWindsurfModelAlias(candidate)
 		if normalized == "" {
 			continue
-		}
-		if alias := windsurfModelAliases[normalized]; alias != "" {
-			normalized = alias
 		}
 		if info, ok := windsurfRawModels[normalized]; ok {
 			return info, normalized, nil

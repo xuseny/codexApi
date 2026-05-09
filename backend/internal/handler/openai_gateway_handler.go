@@ -64,6 +64,17 @@ func resolveOpenAICompatibleGatewayPlatform(apiKey *service.APIKey) string {
 	return service.PlatformOpenAI
 }
 
+func shouldRetryOpenAIMessagesWithNativeWindsurf(requestedModel, failedRoutingModel string) bool {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return false
+	}
+	if strings.EqualFold(requestedModel, strings.TrimSpace(failedRoutingModel)) {
+		return false
+	}
+	return service.IsWindsurfBuiltinModel(requestedModel)
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -648,16 +659,26 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	var lastFailoverErr *service.UpstreamFailoverError
 	effectiveMappedModel := preferredMappedModel
 	gatewayPlatform := resolveOpenAICompatibleGatewayPlatform(apiKey)
+	nativeWindsurfDispatch := false
+	nativeWindsurfDispatchTried := false
 
 	for {
 		currentRoutingModel := routingModel
-		if effectiveMappedModel != "" {
+		if effectiveMappedModel != "" && !nativeWindsurfDispatch {
 			currentRoutingModel = effectiveMappedModel
 		}
-		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
+		selectionPlatform := gatewayPlatform
+		if nativeWindsurfDispatch {
+			selectionPlatform = service.PlatformWindsurf
+		}
+		reqLog.Debug("openai_messages.account_selecting",
+			zap.Int("excluded_account_count", len(failedAccountIDs)),
+			zap.String("selection_platform", selectionPlatform),
+			zap.String("routing_model", currentRoutingModel),
+		)
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForPlatform(
 			c.Request.Context(),
-			gatewayPlatform,
+			selectionPlatform,
 			apiKey.GroupID,
 			"", // no previous_response_id
 			sessionHash,
@@ -671,6 +692,18 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			if len(failedAccountIDs) == 0 &&
+				!nativeWindsurfDispatchTried &&
+				shouldRetryOpenAIMessagesWithNativeWindsurf(routingModel, currentRoutingModel) {
+				nativeWindsurfDispatch = true
+				nativeWindsurfDispatchTried = true
+				effectiveMappedModel = ""
+				reqLog.Info("openai_messages.retry_native_windsurf",
+					zap.String("requested_model", routingModel),
+					zap.String("failed_mapped_model", currentRoutingModel),
+				)
+				continue
+			}
 			if len(failedAccountIDs) == 0 {
 				if err != nil {
 					h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)

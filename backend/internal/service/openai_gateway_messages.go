@@ -32,6 +32,10 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	if account != nil && account.IsWindsurf() && account.Type == AccountTypeOAuth && account.GetCredentialBool("windsurf_builtin") {
+		return s.ForwardWindsurfAsAnthropic(ctx, c, account, body)
+	}
+
 	startTime := time.Now()
 
 	// 1. Parse Anthropic request

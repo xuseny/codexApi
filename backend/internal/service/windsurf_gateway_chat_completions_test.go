@@ -100,3 +100,32 @@ func TestWindsurfResponsesContentPartEventsSerialize(t *testing.T) {
 	require.Contains(t, doneSSE, "event: response.content_part.done")
 	require.Contains(t, doneSSE, `"text":"hello"`)
 }
+
+func TestResolveWindsurfModelSupportsClaudeOpus47Alias(t *testing.T) {
+	info, upstream, err := resolveWindsurfModel("claude-opus-4-7")
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-4-7-medium", upstream)
+	require.Equal(t, "claude-opus-4-7-medium", info.Name)
+	require.True(t, IsWindsurfBuiltinModel("claude-opus-4-7"))
+}
+
+func TestBuildWindsurfAnthropicResponse(t *testing.T) {
+	resp := buildWindsurfAnthropicResponse("msg_test", "claude-opus-4-7", "hello", OpenAIUsage{
+		InputTokens:              3,
+		OutputTokens:             2,
+		CacheCreationInputTokens: 1,
+		CacheReadInputTokens:     4,
+	})
+
+	require.Equal(t, "msg_test", resp.ID)
+	require.Equal(t, "message", resp.Type)
+	require.Equal(t, "assistant", resp.Role)
+	require.Equal(t, "claude-opus-4-7", resp.Model)
+	require.Equal(t, "end_turn", resp.StopReason)
+	require.Len(t, resp.Content, 1)
+	require.Equal(t, "hello", resp.Content[0].Text)
+	require.Equal(t, 3, resp.Usage.InputTokens)
+	require.Equal(t, 2, resp.Usage.OutputTokens)
+	require.Equal(t, 1, resp.Usage.CacheCreationInputTokens)
+	require.Equal(t, 4, resp.Usage.CacheReadInputTokens)
+}

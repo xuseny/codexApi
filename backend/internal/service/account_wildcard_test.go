@@ -197,6 +197,17 @@ func TestAccountIsModelSupported(t *testing.T) {
 			expected:       true,
 		},
 		{
+			name:     "windsurf opus alias matches canonical model",
+			platform: PlatformWindsurf,
+			credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"claude-opus-4-7-medium": "claude-opus-4-7-medium",
+				},
+			},
+			requestedModel: "claude-opus-4-7",
+			expected:       true,
+		},
+		{
 			name: "wildcard match not supported",
 			credentials: map[string]any{
 				"model_mapping": map[string]any{
