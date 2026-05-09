@@ -53,3 +53,25 @@ func TestWindsurfResponsesToChatCompletions_MessageArrayInput(t *testing.T) {
 	require.Equal(t, "call_1", chatReq.Messages[3].ToolCallID)
 	require.JSONEq(t, `"done"`, string(chatReq.Messages[3].Content))
 }
+
+func TestWindsurfResponsesContentPartEventsSerialize(t *testing.T) {
+	added := windsurfBuildResponsesContentPartEvent("response.content_part.added", 2, "msg_test", "")
+	require.Equal(t, "response.content_part.added", added.Type)
+	require.Equal(t, 2, added.SequenceNumber)
+	require.Equal(t, "msg_test", added.ItemID)
+	require.NotNil(t, added.Part)
+	require.Equal(t, "output_text", added.Part.Type)
+
+	addedSSE, err := apicompat.ResponsesEventToSSE(added)
+	require.NoError(t, err)
+	require.Contains(t, addedSSE, "event: response.content_part.added")
+	require.Contains(t, addedSSE, `"item_id":"msg_test"`)
+	require.Contains(t, addedSSE, `"part":{"type":"output_text"`)
+
+	done := windsurfBuildResponsesContentPartEvent("response.content_part.done", 5, "msg_test", "hello")
+	require.Equal(t, "hello", done.Part.Text)
+	doneSSE, err := apicompat.ResponsesEventToSSE(done)
+	require.NoError(t, err)
+	require.Contains(t, doneSSE, "event: response.content_part.done")
+	require.Contains(t, doneSSE, `"text":"hello"`)
+}

@@ -208,9 +208,10 @@ type ResponsesInputItem struct {
 
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
-	Type     string `json:"type"` // "input_text" | "output_text" | "input_image"
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"` // data URI for input_image
+	Type        string `json:"type"` // "input_text" | "output_text" | "input_image"
+	Text        string `json:"text,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"` // data URI for input_image
+	Annotations *[]any `json:"annotations,omitempty"`
 }
 
 // ResponsesTool describes a tool in the Responses API.
@@ -319,6 +320,9 @@ type ResponsesStreamEvent struct {
 
 	// response.output_item.added / response.output_item.done
 	Item *ResponsesOutput `json:"item,omitempty"`
+
+	// response.content_part.added / response.content_part.done
+	Part *ResponsesContentPart `json:"part,omitempty"`
 
 	// response.output_text.delta / response.output_text.done
 	OutputIndex  int    `json:"output_index,omitempty"`

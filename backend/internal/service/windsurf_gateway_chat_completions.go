@@ -229,9 +229,17 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 		}); err != nil {
 			return nil, err
 		}
+		if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEvent(
+			"response.content_part.added",
+			2,
+			itemID,
+			"",
+		)); err != nil {
+			return nil, err
+		}
 	}
 
-	sequence := 2
+	sequence := 3
 	onChunk := func(text string) error {
 		if text == "" {
 			return nil
@@ -282,6 +290,15 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 			Text:           fullText,
 			ItemID:         itemID,
 		}); err != nil {
+			return nil, err
+		}
+		sequence++
+		if err := writeWindsurfResponsesEvent(c, windsurfBuildResponsesContentPartEvent(
+			"response.content_part.done",
+			sequence,
+			itemID,
+			fullText,
+		)); err != nil {
 			return nil, err
 		}
 		sequence++
@@ -604,6 +621,22 @@ func windsurfBuildResponsesResponse(responseID, itemID, model, text string, usag
 			InputTokens:  usage.InputTokens,
 			OutputTokens: usage.OutputTokens,
 			TotalTokens:  usage.InputTokens + usage.OutputTokens,
+		},
+	}
+}
+
+func windsurfBuildResponsesContentPartEvent(eventType string, sequence int, itemID, text string) apicompat.ResponsesStreamEvent {
+	annotations := []any{}
+	return apicompat.ResponsesStreamEvent{
+		Type:           eventType,
+		SequenceNumber: sequence,
+		OutputIndex:    0,
+		ContentIndex:   0,
+		ItemID:         itemID,
+		Part: &apicompat.ResponsesContentPart{
+			Type:        "output_text",
+			Text:        text,
+			Annotations: &annotations,
 		},
 	}
 }
