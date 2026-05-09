@@ -80,7 +80,6 @@ func TestWindsurfResponsesToChatCompletions_ToolsAndChoice(t *testing.T) {
 	instruction := windsurfBuildToolInstruction(chatReq.Tools, chatReq.ToolChoice, chatReq.Model)
 	require.Contains(t, instruction, `{"function_call":{"name":"<function_name>","arguments":{}}}`)
 	require.Contains(t, instruction, `tool_choice requires the function "Read"`)
-	require.Contains(t, windsurfBuildToolUserHint(chatReq.Tools, chatReq.ToolChoice, chatReq.Model), `Required tool: Read`)
 }
 
 func TestWindsurfApplyBridgeInstructionsKeepsToolProtocolOutOfUserMessage(t *testing.T) {
@@ -101,14 +100,41 @@ func TestWindsurfApplyBridgeInstructionsKeepsToolProtocolOutOfUserMessage(t *tes
 	}
 
 	toolInstruction := windsurfBuildToolInstruction(req.Tools, req.ToolChoice, req.Model)
-	windsurfApplyBridgeInstructions(&req, toolInstruction)
+	windsurfApplyBridgeInstructions(&req, toolInstruction, false)
 	messages := buildWindsurfRawMessages(req)
 
 	require.Len(t, messages, 2)
 	require.Equal(t, "system", messages[0].Role)
 	require.Contains(t, messages[0].Content, "external API client")
-	require.Contains(t, messages[0].Content, "Available functions")
+	require.NotContains(t, messages[0].Content, "Available functions")
 	require.NotContains(t, messages[1].Content, "<tool_call>")
+	require.NotContains(t, messages[1].Content, "Tools available this turn")
+}
+
+func TestWindsurfApplyBridgeInstructionsIncludesToolProtocolForRawMode(t *testing.T) {
+	req := apicompat.ChatCompletionsRequest{
+		Model: "gpt-5.5",
+		Messages: []apicompat.ChatMessage{{
+			Role:    "user",
+			Content: json.RawMessage(`"分析下项目"`),
+		}},
+		Tools: []apicompat.ChatTool{{
+			Type: "function",
+			Function: &apicompat.ChatFunction{
+				Name:        "shell_command",
+				Description: "Run a shell command",
+				Parameters:  json.RawMessage(`{"type":"object","required":["command","description"],"properties":{"command":{"type":"string"},"description":{"type":"string"}}}`),
+			},
+		}},
+	}
+
+	toolInstruction := windsurfBuildToolInstruction(req.Tools, req.ToolChoice, req.Model)
+	windsurfApplyBridgeInstructions(&req, toolInstruction, true)
+	messages := buildWindsurfRawMessages(req)
+
+	require.Len(t, messages, 2)
+	require.Contains(t, messages[0].Content, "Available functions")
+	require.Contains(t, messages[0].Content, "shell_command")
 	require.NotContains(t, messages[1].Content, "Tools available this turn")
 }
 
@@ -119,6 +145,14 @@ func TestWindsurfBuildCascadeConfigUsesCompactToolHint(t *testing.T) {
 	require.Contains(t, config, "Client-side tools are available")
 	require.NotContains(t, config, "Available functions")
 	require.NotContains(t, config, "tool schema tool schema")
+}
+
+func TestWindsurfBuildCascadeConfigIncludesCompactToolNames(t *testing.T) {
+	config := string(windsurfBuildCascadeConfig(1, "model_uid", "Available functions:\n### shell_command\nRun shell command"))
+
+	require.Contains(t, config, "shell_command")
+	require.Contains(t, config, "real callable tools")
+	require.NotContains(t, config, "Windsurf language server")
 }
 
 func TestBuildWindsurfRawMessagesToolHistory(t *testing.T) {
