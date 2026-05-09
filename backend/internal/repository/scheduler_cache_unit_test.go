@@ -31,3 +31,42 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	require.Equal(t, true, got.Extra["mixed_scheduling"])
 	require.Nil(t, got.Extra["unused_large_field"])
 }
+
+func TestBuildSchedulerMetadataAccount_KeepsWindsurfRoutingFlag(t *testing.T) {
+	account := service.Account{
+		ID:       6335,
+		Platform: service.PlatformWindsurf,
+		Type:     service.AccountTypeOAuth,
+		Credentials: map[string]any{
+			"windsurf_builtin": true,
+			"access_token":     "secret-token",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.True(t, got.GetCredentialBool("windsurf_builtin"))
+	require.True(t, got.IsWindsurfBuiltinOAuth())
+	require.Empty(t, got.GetCredential("access_token"))
+}
+
+func TestBuildSchedulerMetadataAccount_KeepsRPMFields(t *testing.T) {
+	account := service.Account{
+		ID:       7,
+		Platform: service.PlatformAnthropic,
+		Type:     service.AccountTypeOAuth,
+		Extra: map[string]any{
+			"base_rpm":          15,
+			"rpm_strategy":      "sticky_exempt",
+			"rpm_sticky_buffer": 5,
+			"unused_large_key":  "drop-me",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, 15, got.GetBaseRPM())
+	require.Equal(t, "sticky_exempt", got.GetRPMStrategy())
+	require.Equal(t, 5, got.GetRPMStickyBuffer())
+	require.Nil(t, got.Extra["unused_large_key"])
+}
