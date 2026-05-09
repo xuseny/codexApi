@@ -613,6 +613,22 @@ func TestResponsesAnthropicEventToSSE(t *testing.T) {
 	assert.Contains(t, sse, `"resp_1"`)
 }
 
+func TestResponsesAnthropicEventToSSE_TextBlockStartKeepsEmptyText(t *testing.T) {
+	idx := 0
+	evt := AnthropicStreamEvent{
+		Type:  "content_block_start",
+		Index: &idx,
+		ContentBlock: &AnthropicContentBlock{
+			Type: "text",
+			Text: "",
+		},
+	}
+
+	sse, err := ResponsesAnthropicEventToSSE(evt)
+	require.NoError(t, err)
+	assert.Contains(t, sse, `"content_block":{"type":"text","text":""}`)
+}
+
 // ---------------------------------------------------------------------------
 // response.failed tests
 // ---------------------------------------------------------------------------
