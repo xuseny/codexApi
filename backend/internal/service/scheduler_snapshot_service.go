@@ -114,7 +114,11 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		if err != nil {
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
-			return derefAccounts(cached), useMixed, nil
+			accounts := derefAccounts(cached)
+			if len(accounts) > 0 || !s.shouldRefreshEmptySchedulerSnapshot(ctx, bucket, useMixed) {
+				return accounts, useMixed, nil
+			}
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] empty mixed snapshot refresh: bucket=%s", bucket.String())
 		}
 	}
 
@@ -137,6 +141,12 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	}
 
 	return accounts, useMixed, nil
+}
+
+func (s *SchedulerSnapshotService) shouldRefreshEmptySchedulerSnapshot(ctx context.Context, bucket SchedulerBucket, useMixed bool) bool {
+	return useMixed &&
+		bucket.Platform == PlatformAnthropic &&
+		IsWindsurfAnthropicMessagesRouting(ctx)
 }
 
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -182,16 +192,10 @@ func (s *SchedulerSnapshotService) runInitialRebuild() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	buckets, err := s.cache.ListBuckets(ctx)
+	buckets, err := s.rebuildBucketsWithDefaults(ctx)
 	if err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
-	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
-			return
-		}
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild bucket list failed: %v", err)
+		return
 	}
 	if err := s.rebuildBuckets(ctx, buckets, "startup"); err != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild startup failed: %v", err)
@@ -576,19 +580,39 @@ func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	buckets, err := s.cache.ListBuckets(ctx)
+	buckets, err := s.rebuildBucketsWithDefaults(ctx)
 	if err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", err)
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild bucket list failed: %v", err)
 		return err
 	}
-	if len(buckets) == 0 {
-		buckets, err = s.defaultBuckets(ctx)
-		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", err)
-			return err
+	return s.rebuildBuckets(ctx, buckets, reason)
+}
+
+func (s *SchedulerSnapshotService) rebuildBucketsWithDefaults(ctx context.Context) ([]SchedulerBucket, error) {
+	if s.cache == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	buckets, listErr := s.cache.ListBuckets(ctx)
+	if listErr != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] list buckets failed: %v", listErr)
+	}
+	defaults, defaultErr := s.defaultBuckets(ctx)
+	if defaultErr != nil {
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] default buckets failed: %v", defaultErr)
+		if len(buckets) == 0 {
+			if listErr != nil {
+				return nil, listErr
+			}
+			return nil, defaultErr
 		}
 	}
-	return s.rebuildBuckets(ctx, buckets, reason)
+	if len(defaults) > 0 {
+		buckets = append(buckets, defaults...)
+	}
+	if len(buckets) == 0 {
+		return nil, nil
+	}
+	return dedupeBuckets(buckets), nil
 }
 
 func (s *SchedulerSnapshotService) checkOutboxLag(ctx context.Context, oldest SchedulerOutboxEvent, watermark int64) {

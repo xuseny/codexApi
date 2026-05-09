@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestGatewayServiceWindsurfBuiltinOAuthAllowedForAnthropicMessagesOnly(t *testing.T) {
@@ -80,4 +81,81 @@ func TestWindsurfBuiltinAccountSupportsRequestedModel(t *testing.T) {
 	if windsurfBuiltinAccountSupportsRequestedModel(account, "claude-opus-4-7") {
 		t.Fatal("expected non-whitelisted model to be rejected when model_mapping is configured")
 	}
+}
+
+func TestSchedulerSnapshotRefreshesEmptyAnthropicWindsurfBucket(t *testing.T) {
+	service := &SchedulerSnapshotService{}
+	ctx := WithWindsurfAnthropicMessagesRouting(context.Background(), true)
+	bucket := SchedulerBucket{GroupID: 1, Platform: PlatformAnthropic, Mode: SchedulerModeMixed}
+
+	if !service.shouldRefreshEmptySchedulerSnapshot(ctx, bucket, true) {
+		t.Fatal("expected empty anthropic mixed snapshot to refresh during windsurf anthropic routing")
+	}
+	if service.shouldRefreshEmptySchedulerSnapshot(context.Background(), bucket, true) {
+		t.Fatal("expected normal anthropic routing to trust empty snapshot")
+	}
+}
+
+func TestSchedulerRebuildBucketsWithDefaultsIncludesAnthropicMixed(t *testing.T) {
+	cache := &windsurfRoutingSchedulerCache{
+		buckets: []SchedulerBucket{{GroupID: 0, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}},
+	}
+	service := NewSchedulerSnapshotService(cache, nil, nil, nil, nil)
+
+	buckets, err := service.rebuildBucketsWithDefaults(context.Background())
+	if err != nil {
+		t.Fatalf("rebuildBucketsWithDefaults error: %v", err)
+	}
+
+	seen := make(map[string]bool, len(buckets))
+	for _, bucket := range buckets {
+		seen[bucket.String()] = true
+	}
+	if !seen[(SchedulerBucket{GroupID: 0, Platform: PlatformAnthropic, Mode: SchedulerModeMixed}).String()] {
+		t.Fatalf("expected default anthropic mixed bucket to be merged, got %v", buckets)
+	}
+}
+
+type windsurfRoutingSchedulerCache struct {
+	buckets []SchedulerBucket
+}
+
+func (c *windsurfRoutingSchedulerCache) GetSnapshot(context.Context, SchedulerBucket) ([]*Account, bool, error) {
+	return nil, false, nil
+}
+
+func (c *windsurfRoutingSchedulerCache) SetSnapshot(context.Context, SchedulerBucket, []Account) error {
+	return nil
+}
+
+func (c *windsurfRoutingSchedulerCache) GetAccount(context.Context, int64) (*Account, error) {
+	return nil, nil
+}
+
+func (c *windsurfRoutingSchedulerCache) SetAccount(context.Context, *Account) error {
+	return nil
+}
+
+func (c *windsurfRoutingSchedulerCache) DeleteAccount(context.Context, int64) error {
+	return nil
+}
+
+func (c *windsurfRoutingSchedulerCache) UpdateLastUsed(context.Context, map[int64]time.Time) error {
+	return nil
+}
+
+func (c *windsurfRoutingSchedulerCache) TryLockBucket(context.Context, SchedulerBucket, time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (c *windsurfRoutingSchedulerCache) ListBuckets(context.Context) ([]SchedulerBucket, error) {
+	return c.buckets, nil
+}
+
+func (c *windsurfRoutingSchedulerCache) GetOutboxWatermark(context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (c *windsurfRoutingSchedulerCache) SetOutboxWatermark(context.Context, int64) error {
+	return nil
 }
