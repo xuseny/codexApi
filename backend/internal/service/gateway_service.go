@@ -1504,6 +1504,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	if len(accounts) == 0 {
+		s.logSchedulingPoolDiagnostic(ctx, groupID, platform, requestedModel, useMixed, hasForcePlatform, "empty_account_list")
 		return nil, ErrNoAvailableAccounts
 	}
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
@@ -1942,6 +1943,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
 		})
+	}
+	stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, false)
+	if stats.Total > 0 {
+		return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
 	}
 	return nil, ErrNoAvailableAccounts
 }
@@ -3420,6 +3425,134 @@ type selectionFailureStats struct {
 type selectionFailureDiagnosis struct {
 	Category string
 	Detail   string
+}
+
+func (s *GatewayService) logSchedulingPoolDiagnostic(
+	ctx context.Context,
+	groupID *int64,
+	platform string,
+	requestedModel string,
+	useMixed bool,
+	hasForcePlatform bool,
+	reason string,
+) {
+	if s == nil || s.accountRepo == nil {
+		return
+	}
+
+	diagCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+
+	accounts, err := s.loadAccountsForSchedulingDiagnostic(diagCtx, groupID, platform, useMixed)
+	if err != nil {
+		logger.LegacyPrintf(
+			"service.gateway",
+			"[SchedulingPoolDiagnostic] reason=%s group_id=%v platform=%s model=%s use_mixed=%t force_platform=%t error=%v",
+			reason,
+			derefGroupID(groupID),
+			platform,
+			requestedModel,
+			useMixed,
+			hasForcePlatform,
+			err,
+		)
+		return
+	}
+
+	queryPlatforms := []string{platform}
+	if useMixed {
+		queryPlatforms = mixedSchedulingQueryPlatforms(platform)
+	}
+	querySet := make(map[string]struct{}, len(queryPlatforms))
+	for _, p := range queryPlatforms {
+		querySet[p] = struct{}{}
+	}
+
+	var activeCount, schedulableCount, queryPlatformCount, allowedPlatformCount, modelSupportedCount, windsurfBuiltinCount int
+	samples := make([]string, 0, 8)
+	for i := range accounts {
+		acc := &accounts[i]
+		if acc.Status == StatusActive {
+			activeCount++
+		}
+		if acc.IsSchedulable() {
+			schedulableCount++
+		}
+		if _, ok := querySet[acc.Platform]; ok {
+			queryPlatformCount++
+		}
+		if s.isAccountAllowedForPlatform(ctx, acc, platform, useMixed) {
+			allowedPlatformCount++
+		}
+		if requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+			modelSupportedCount++
+		}
+		if acc.IsWindsurfBuiltinOAuth() {
+			windsurfBuiltinCount++
+		}
+		if len(samples) < 8 {
+			samples = append(samples, fmt.Sprintf(
+				"id=%d platform=%s type=%s status=%s schedulable=%t groups=%v windsurf_builtin=%t model_supported=%t",
+				acc.ID,
+				acc.Platform,
+				acc.Type,
+				acc.Status,
+				acc.IsSchedulable(),
+				acc.GroupIDs,
+				acc.IsWindsurfBuiltinOAuth(),
+				requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel),
+			))
+		}
+	}
+
+	logger.LegacyPrintf(
+		"service.gateway",
+		"[SchedulingPoolDiagnostic] reason=%s group_id=%v platform=%s model=%s use_mixed=%t force_platform=%t query_platforms=%v total_group_accounts=%d active=%d schedulable=%d query_platform=%d allowed_platform=%d model_supported=%d windsurf_builtin=%d samples=%v",
+		reason,
+		derefGroupID(groupID),
+		platform,
+		requestedModel,
+		useMixed,
+		hasForcePlatform,
+		queryPlatforms,
+		len(accounts),
+		activeCount,
+		schedulableCount,
+		queryPlatformCount,
+		allowedPlatformCount,
+		modelSupportedCount,
+		windsurfBuiltinCount,
+		samples,
+	)
+}
+
+func (s *GatewayService) loadAccountsForSchedulingDiagnostic(ctx context.Context, groupID *int64, platform string, useMixed bool) ([]Account, error) {
+	if groupID != nil && *groupID > 0 {
+		return s.accountRepo.ListByGroup(ctx, *groupID)
+	}
+	platforms := []string{platform}
+	if useMixed {
+		platforms = mixedSchedulingQueryPlatforms(platform)
+	}
+	seen := make(map[int64]struct{})
+	accounts := make([]Account, 0)
+	for _, p := range platforms {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		items, err := s.accountRepo.ListByPlatform(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		for _, acc := range items {
+			if _, ok := seen[acc.ID]; ok {
+				continue
+			}
+			seen[acc.ID] = struct{}{}
+			accounts = append(accounts, acc)
+		}
+	}
+	return accounts, nil
 }
 
 func (s *GatewayService) logDetailedSelectionFailure(
