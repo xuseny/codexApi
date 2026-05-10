@@ -180,6 +180,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	SetClaudeCodeClientContext(c, body, parsedReq)
 	isClaudeCodeClient := service.IsClaudeCodeClient(c.Request.Context())
 
+	if updatedBody, changed, injectErr := service.MaybeInjectAnthropicWebSearchTool(body); injectErr == nil && changed {
+		body = updatedBody
+		parsedReq.Body = updatedBody
+		reqLog.Info("gateway.messages.injected_web_search_tool",
+			zap.Bool("is_claude_code_client", isClaudeCodeClient),
+			zap.String("model", reqModel),
+		)
+	}
+
 	// 版本检查：仅对 Claude Code 客户端，拒绝低于最低版本的请求
 	if !h.checkClaudeCodeVersion(c) {
 		return

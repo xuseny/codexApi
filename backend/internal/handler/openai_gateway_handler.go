@@ -643,6 +643,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
+	if updatedBody, changed, injectErr := service.MaybeInjectAnthropicWebSearchTool(body); injectErr == nil && changed {
+		body = updatedBody
+		reqLog.Info("openai_messages.injected_web_search_tool",
+			zap.String("model", reqModel),
+		)
+	}
+
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
