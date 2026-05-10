@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -4320,6 +4321,49 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应
 	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body) {
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
+	}
+
+	var anthropicReq apicompat.AnthropicRequest
+	if err := json.Unmarshal(parsed.Body, &anthropicReq); err == nil {
+		agentExecution := resolveServerAgentExecution(c, WireProtocolAnthropicMessages, hasAnthropicTools(&anthropicReq))
+		if agentExecution.Enabled {
+			responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+			if err != nil {
+				writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse server-agent request")
+				return nil, err
+			}
+			loopResult, err := runServerAgentLoop(
+				ctx,
+				responsesReq,
+				&anthropicResponsesTurnExecutor{service: s, ctx: c, account: account},
+				newServerToolRuntime(account, agentExecution.WorkingDir),
+				agentExecution.MaxTurns,
+			)
+			if err != nil {
+				writeAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
+				return nil, err
+			}
+			finalResponse := cloneResponsesResponse(loopResult.Response)
+			if finalResponse != nil {
+				finalResponse.Model = parsed.Model
+			}
+			if parsed.Stream {
+				if err := writeSyntheticAnthropicStream(c, finalResponse, parsed.Model); err != nil {
+					return nil, err
+				}
+			} else if c != nil {
+				c.JSON(http.StatusOK, apicompat.ResponsesToAnthropic(finalResponse, parsed.Model))
+			}
+			return &ForwardResult{
+				RequestID:      finalResponse.ID,
+				Usage:          responsesUsageToClaudeUsage(finalResponse.Usage),
+				Model:          parsed.Model,
+				UpstreamModel:  account.GetMappedModel(parsed.Model),
+				Stream:         parsed.Stream,
+				Duration:       time.Since(startTime),
+				ReasoningEffort: nil,
+			}, nil
+		}
 	}
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {

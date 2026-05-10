@@ -2408,6 +2408,49 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	agentExecution := resolveServerAgentExecution(c, WireProtocolOpenAIResponses, hasToolsSignal(reqBody))
+	if agentExecution.Enabled {
+		var agentReq apicompat.ResponsesRequest
+		if err := json.Unmarshal(body, &agentReq); err != nil {
+			writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse server-agent request")
+			return nil, fmt.Errorf("parse server-agent responses request: %w", err)
+		}
+		loopResult, err := runServerAgentLoop(
+			ctx,
+			&agentReq,
+			&openAIResponsesTurnExecutor{service: s, ctx: c, account: account},
+			newServerToolRuntime(account, agentExecution.WorkingDir),
+			agentExecution.MaxTurns,
+		)
+		if err != nil {
+			writeResponsesError(c, http.StatusBadGateway, "server_error", err.Error())
+			return nil, err
+		}
+		finalResponse := cloneResponsesResponse(loopResult.Response)
+		if finalResponse != nil {
+			finalResponse.Model = originalModel
+		}
+		if reqStream {
+			if err := writeSyntheticResponsesStream(c, finalResponse); err != nil {
+				return nil, err
+			}
+		} else if c != nil {
+			c.JSON(http.StatusOK, finalResponse)
+		}
+		return &OpenAIForwardResult{
+			RequestID:       finalResponse.ID,
+			Usage:           responsesUsageToOpenAIUsage(finalResponse.Usage),
+			Model:           originalModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+			ServiceTier:     extractOpenAIServiceTierFromBody(body),
+			ReasoningEffort: extractOpenAIReasoningEffortFromBody(body, reqModel),
+			Stream:          reqStream,
+			OpenAIWSMode:    false,
+			Duration:        time.Since(startTime),
+		}, nil
+	}
+
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {

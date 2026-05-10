@@ -158,6 +158,44 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
 
+	agentExecution := resolveServerAgentExecution(c, WireProtocolOpenAIChat, hasResponsesTools(responsesReq))
+	if agentExecution.Enabled {
+		loopResult, err := runServerAgentLoop(
+			ctx,
+			responsesReq,
+			&openAIResponsesTurnExecutor{service: s, ctx: c, account: account},
+			newServerToolRuntime(account, agentExecution.WorkingDir),
+			agentExecution.MaxTurns,
+		)
+		if err != nil {
+			writeChatCompletionsError(c, http.StatusBadGateway, "server_error", err.Error())
+			return nil, err
+		}
+		finalResponse := cloneResponsesResponse(loopResult.Response)
+		if finalResponse != nil {
+			finalResponse.Model = originalModel
+		}
+		if clientStream {
+			if err := writeSyntheticChatCompletionsStream(c, finalResponse, originalModel, includeUsage); err != nil {
+				return nil, err
+			}
+		} else if c != nil {
+			c.JSON(http.StatusOK, apicompat.ResponsesToChatCompletions(finalResponse, originalModel))
+		}
+		return &OpenAIForwardResult{
+			RequestID:       finalResponse.ID,
+			Usage:           responsesUsageToOpenAIUsage(finalResponse.Usage),
+			Model:           originalModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+			ServiceTier:     func() *string { if responsesReq.ServiceTier == "" { return nil }; v := responsesReq.ServiceTier; return &v }(),
+			ReasoningEffort: func() *string { if responsesReq.Reasoning == nil || responsesReq.Reasoning.Effort == "" { return nil }; v := responsesReq.Reasoning.Effort; return &v }(),
+			Stream:          clientStream,
+			OpenAIWSMode:    false,
+			Duration:        time.Since(startTime),
+		}, nil
+	}
+
 	if account.Type == AccountTypeOAuth {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {

@@ -78,6 +78,44 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		zap.Bool("stream", isStream),
 	)
 
+	agentExecution := resolveServerAgentExecution(c, WireProtocolAnthropicMessages, hasResponsesTools(responsesReq))
+	if agentExecution.Enabled {
+		loopResult, err := runServerAgentLoop(
+			ctx,
+			responsesReq,
+			&openAIResponsesTurnExecutor{service: s, ctx: c, account: account},
+			newServerToolRuntime(account, agentExecution.WorkingDir),
+			agentExecution.MaxTurns,
+		)
+		if err != nil {
+			writeAnthropicError(c, http.StatusBadGateway, "api_error", err.Error())
+			return nil, err
+		}
+		finalResponse := cloneResponsesResponse(loopResult.Response)
+		if finalResponse != nil {
+			finalResponse.Model = originalModel
+		}
+		if clientStream {
+			if err := writeSyntheticAnthropicStream(c, finalResponse, originalModel); err != nil {
+				return nil, err
+			}
+		} else if c != nil {
+			c.JSON(http.StatusOK, apicompat.ResponsesToAnthropic(finalResponse, originalModel))
+		}
+		return &OpenAIForwardResult{
+			RequestID:       finalResponse.ID,
+			Usage:           responsesUsageToOpenAIUsage(finalResponse.Usage),
+			Model:           originalModel,
+			BillingModel:    billingModel,
+			UpstreamModel:   upstreamModel,
+			ServiceTier:     func() *string { if responsesReq.ServiceTier == "" { return nil }; v := responsesReq.ServiceTier; return &v }(),
+			ReasoningEffort: func() *string { if responsesReq.Reasoning == nil || responsesReq.Reasoning.Effort == "" { return nil }; v := responsesReq.Reasoning.Effort; return &v }(),
+			Stream:          clientStream,
+			OpenAIWSMode:    false,
+			Duration:        time.Since(startTime),
+		}, nil
+	}
+
 	// 4. Marshal Responses request body, then apply OAuth codex transform
 	responsesBody, err := json.Marshal(responsesReq)
 	if err != nil {

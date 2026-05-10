@@ -76,6 +76,41 @@ func (s *GatewayService) ForwardAsResponses(
 		zap.Bool("client_stream", clientStream),
 	)
 
+	agentExecution := resolveServerAgentExecution(c, WireProtocolOpenAIResponses, hasResponsesTools(&responsesReq))
+	if agentExecution.Enabled {
+		loopResult, err := runServerAgentLoop(
+			ctx,
+			&responsesReq,
+			&anthropicResponsesTurnExecutor{service: s, ctx: c, account: account},
+			newServerToolRuntime(account, agentExecution.WorkingDir),
+			agentExecution.MaxTurns,
+		)
+		if err != nil {
+			writeResponsesError(c, http.StatusBadGateway, "server_error", err.Error())
+			return nil, err
+		}
+		finalResponse := cloneResponsesResponse(loopResult.Response)
+		if finalResponse != nil {
+			finalResponse.Model = originalModel
+		}
+		if clientStream {
+			if err := writeSyntheticResponsesStream(c, finalResponse); err != nil {
+				return nil, err
+			}
+		} else if c != nil {
+			c.JSON(http.StatusOK, finalResponse)
+		}
+		return &ForwardResult{
+			RequestID:       finalResponse.ID,
+			Usage:           responsesUsageToClaudeUsage(finalResponse.Usage),
+			Model:           originalModel,
+			UpstreamModel:   mappedModel,
+			ReasoningEffort: reasoningEffort,
+			Stream:          clientStream,
+			Duration:        time.Since(startTime),
+		}, nil
+	}
+
 	// 5. Marshal Anthropic request body
 	anthropicBody, err := json.Marshal(anthropicReq)
 	if err != nil {
