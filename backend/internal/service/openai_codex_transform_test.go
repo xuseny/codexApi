@@ -490,6 +490,39 @@ func TestEnsureOpenAIResponsesImageGenerationTool_NoTools(t *testing.T) {
 	require.Equal(t, "png", tool["output_format"])
 }
 
+func TestEnsureOpenAIResponsesWebSearchTool_NoTools(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.4",
+		"input": "find current coupons",
+	}
+
+	modified := ensureOpenAIResponsesWebSearchTool(reqBody)
+	require.True(t, modified)
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search", tool["type"])
+}
+
+func TestEnsureOpenAIResponsesWebSearchTool_PreservesExistingWebSearch(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.4",
+		"tools": []any{
+			map[string]any{"type": "web_search"},
+		},
+	}
+
+	modified := ensureOpenAIResponsesWebSearchTool(reqBody)
+	require.False(t, modified)
+
+	tools, ok := reqBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+}
+
 func TestEnsureOpenAIResponsesImageGenerationTool_SkipsSpark(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.3-codex-spark",
@@ -578,6 +611,67 @@ func TestApplyCodexImageGenerationBridgeInstructions_SkipsSpark(t *testing.T) {
 	modified := applyCodexImageGenerationBridgeInstructions(reqBody)
 	require.False(t, modified)
 	require.Equal(t, "existing instructions", reqBody["instructions"])
+}
+
+func TestApplyCodexWebSearchBridgeInstructions_AppendsBridgeOnce(t *testing.T) {
+	reqBody := map[string]any{
+		"model":        "gpt-5.4",
+		"instructions": "existing instructions",
+		"tools": []any{
+			map[string]any{"type": "web_search"},
+		},
+	}
+
+	modified := applyCodexWebSearchBridgeInstructions(reqBody)
+	require.True(t, modified)
+
+	instructions, ok := reqBody["instructions"].(string)
+	require.True(t, ok)
+	require.Contains(t, instructions, "existing instructions")
+	require.Contains(t, instructions, codexWebSearchBridgeMarker)
+	require.Contains(t, instructions, "Responses native `web_search` tool")
+
+	modified = applyCodexWebSearchBridgeInstructions(reqBody)
+	require.False(t, modified)
+}
+
+func TestApplyCodexWebSearchBridgeInstructions_SkipsWithoutWebSearchTool(t *testing.T) {
+	reqBody := map[string]any{
+		"instructions": "existing instructions",
+		"tools": []any{
+			map[string]any{"type": "image_generation"},
+		},
+	}
+
+	modified := applyCodexWebSearchBridgeInstructions(reqBody)
+	require.False(t, modified)
+	require.Equal(t, "existing instructions", reqBody["instructions"])
+}
+
+func TestCodexBuildWebSearchQuery_CouponURL(t *testing.T) {
+	query := codexBuildWebSearchQuery("https://cloud.speedidc.cn 帮我找下这个网站的优惠码")
+	require.Equal(t, "cloud.speedidc.cn 优惠码 折扣 促销 活动 coupon promo discount", query)
+}
+
+func TestCodexShouldPreloadWebSearch_CurrentCouponIntent(t *testing.T) {
+	require.True(t, codexShouldPreloadWebSearch("https://cloud.speedidc.cn 帮我找下这个网站的优惠码"))
+	require.True(t, codexShouldPreloadWebSearch("find current coupons for speedidc"))
+	require.False(t, codexShouldPreloadWebSearch("explain this local function"))
+}
+
+func TestInjectCodexWebSearchResults_AppendsInstructions(t *testing.T) {
+	reqBody := map[string]any{
+		"instructions": "existing instructions",
+	}
+
+	injectCodexWebSearchResults(reqBody, "cloud.speedidc.cn 优惠码", "brave", nil)
+
+	instructions, ok := reqBody["instructions"].(string)
+	require.True(t, ok)
+	require.Contains(t, instructions, "existing instructions")
+	require.Contains(t, instructions, codexWebSearchResultsMarker)
+	require.Contains(t, instructions, "Query: cloud.speedidc.cn 优惠码")
+	require.Contains(t, instructions, "Provider: brave")
 }
 
 func TestApplyCodexImageGenerationBridgeInstructions_SkipsWithoutImageTool(t *testing.T) {

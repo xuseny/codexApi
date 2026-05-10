@@ -49,6 +49,8 @@ type codexTransformResult struct {
 const (
 	codexImageGenerationBridgeMarker = "<sub2api-codex-image-generation>"
 	codexImageGenerationBridgeText   = codexImageGenerationBridgeMarker + "\nWhen the user asks for raster image generation or editing, use the OpenAI Responses native `image_generation` tool attached to this request. The local Codex client may not expose an `image_gen` namespace, but that does not mean image generation is unavailable. Do not ask the user to switch to CLI fallback solely because `image_gen` is absent.\n</sub2api-codex-image-generation>"
+	codexWebSearchBridgeMarker       = "<sub2api-codex-web-search>"
+	codexWebSearchBridgeText         = codexWebSearchBridgeMarker + "\nWhen the user asks for current, latest, real-time, changing, web-based, price, schedule, product, company, promotion, coupon, discount, or source-cited information, use the OpenAI Responses native `web_search` tool attached to this request before answering. The local Codex client may not expose a browser or web namespace, but that does not mean web search is unavailable. Do not say you cannot browse, search, access URLs, or get real-time information solely because no local browser tool is visible.\n</sub2api-codex-web-search>"
 	codexSparkImageUnsupportedMarker = "<sub2api-codex-spark-image-unsupported>"
 	codexSparkImageUnsupportedText   = codexSparkImageUnsupportedMarker + "\nThe current model is gpt-5.3-codex-spark, which does not support image generation, image editing, image input, the `image_generation` tool, or Codex `image_gen`/`$imagegen` workflows. If the user asks for image generation or image editing, clearly explain this model limitation and ask them to switch to a non-Spark Codex model such as gpt-5.3-codex or gpt-5.4. Do not claim that the local environment merely lacks image_gen tooling, and do not suggest CLI fallback as the primary fix while the model remains Spark.\n</sub2api-codex-spark-image-unsupported>"
 )
@@ -463,6 +465,28 @@ func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {
 	return false
 }
 
+func hasOpenAIWebSearchTool(reqBody map[string]any) bool {
+	rawTools, ok := reqBody["tools"]
+	if !ok || rawTools == nil {
+		return false
+	}
+	tools, ok := rawTools.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		toolMap, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolType := strings.TrimSpace(firstNonEmptyString(toolMap["type"]))
+		if toolType == "web_search" || strings.HasPrefix(toolType, "web_search_preview") {
+			return true
+		}
+	}
+	return false
+}
+
 func hasOpenAIInputImage(reqBody map[string]any) bool {
 	if reqBody == nil {
 		return false
@@ -537,6 +561,31 @@ func normalizeOpenAIResponsesImageGenerationTools(reqBody map[string]any) bool {
 	return modified
 }
 
+func ensureOpenAIResponsesWebSearchTool(reqBody map[string]any) bool {
+	if len(reqBody) == 0 || hasOpenAIWebSearchTool(reqBody) {
+		return false
+	}
+
+	tool := map[string]any{
+		"type": "web_search",
+	}
+
+	rawTools, ok := reqBody["tools"]
+	if !ok || rawTools == nil {
+		reqBody["tools"] = []any{tool}
+		return true
+	}
+
+	tools, ok := rawTools.([]any)
+	if !ok {
+		reqBody["tools"] = []any{tool}
+		return true
+	}
+
+	reqBody["tools"] = append(tools, tool)
+	return true
+}
+
 func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 	if len(reqBody) == 0 {
 		return false
@@ -572,6 +621,26 @@ func ensureOpenAIResponsesImageGenerationTool(reqBody map[string]any) bool {
 	}
 
 	reqBody["tools"] = append(tools, tool)
+	return true
+}
+
+func applyCodexWebSearchBridgeInstructions(reqBody map[string]any) bool {
+	if len(reqBody) == 0 || !hasOpenAIWebSearchTool(reqBody) {
+		return false
+	}
+
+	existing, _ := reqBody["instructions"].(string)
+	if strings.Contains(existing, codexWebSearchBridgeMarker) {
+		return false
+	}
+
+	existing = strings.TrimRight(existing, " \t\r\n")
+	if strings.TrimSpace(existing) == "" {
+		reqBody["instructions"] = codexWebSearchBridgeText
+		return true
+	}
+
+	reqBody["instructions"] = existing + "\n\n" + codexWebSearchBridgeText
 	return true
 }
 

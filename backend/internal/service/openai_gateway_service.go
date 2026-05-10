@@ -2170,11 +2170,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		disablePatch()
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses image_generation tool for Codex client")
 	}
+	if isCodexCLI && ensureOpenAIResponsesWebSearchTool(reqBody) {
+		bodyModified = true
+		disablePatch()
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses web_search tool for Codex client")
+	}
 
 	if normalizeOpenAIResponsesImageGenerationTools(reqBody) {
 		bodyModified = true
 		disablePatch()
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized /responses image_generation tool payload")
+	}
+	if isCodexCLI && applyCodexWebSearchBridgeInstructions(reqBody) {
+		bodyModified = true
+		disablePatch()
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Added Codex web_search bridge instructions")
 	}
 	if isCodexCLI && applyCodexImageGenerationBridgeInstructions(reqBody) {
 		bodyModified = true
@@ -2299,6 +2309,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
 		}
+	}
+	if isCodexCLI && maybeInjectCodexWebSearchContext(ctx, reqBody, account) {
+		bodyModified = true
+		disablePatch()
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected Codex web_search preload context")
 	}
 
 	// Handle max_output_tokens based on platform and account type
