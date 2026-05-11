@@ -362,6 +362,13 @@ func (s *OpenAIGatewayService) ForwardWindsurfResponses(
 	if toolsEnabled {
 		var parseStatus string
 		toolCalls, cleanedToolText, parseStatus = windsurfParseToolCallsDetailedFromText(text, chatReq.Tools)
+		if len(toolCalls) == 0 {
+			if synthetic, ok := windsurfSynthesizeToolCallFromRefusal(text, messages, chatReq.Tools); ok {
+				toolCalls = []windsurfParsedToolCall{synthetic}
+				cleanedToolText = ""
+				parseStatus = "synthesized_from_refusal"
+			}
+		}
 		logger.L().Debug("windsurf.tool_bridge_parse",
 			zap.Int64("account_id", account.ID),
 			zap.String("model", originalModel),
@@ -719,6 +726,13 @@ func (s *OpenAIGatewayService) ForwardWindsurfAsAnthropic(
 	if toolsEnabled {
 		var parseStatus string
 		toolCalls, cleanedToolText, parseStatus = windsurfParseToolCallsDetailedFromText(text, chatReq.Tools)
+		if len(toolCalls) == 0 {
+			if synthetic, ok := windsurfSynthesizeToolCallFromRefusal(text, messages, chatReq.Tools); ok {
+				toolCalls = []windsurfParsedToolCall{synthetic}
+				cleanedToolText = ""
+				parseStatus = "synthesized_from_refusal"
+			}
+		}
 		logger.L().Debug("windsurf.tool_bridge_parse",
 			zap.Int64("account_id", account.ID),
 			zap.String("model", originalModel),
@@ -1118,7 +1132,8 @@ func windsurfResponsesToolsToChatTools(tools []apicompat.ResponsesTool) []apicom
 	}
 	out := make([]apicompat.ChatTool, 0, len(tools))
 	for _, tool := range tools {
-		if tool.Type != "function" || strings.TrimSpace(tool.Name) == "" {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" || strings.TrimSpace(tool.Type) == "" {
 			continue
 		}
 		out = append(out, apicompat.ChatTool{
@@ -1421,6 +1436,313 @@ func windsurfToolBridgeEmptyFallbackText(toolChoice json.RawMessage) string {
 		return "The upstream model returned no valid tool call. Please retry this request."
 	}
 	return "The upstream model returned an empty response. Please retry this request."
+}
+
+func windsurfSynthesizeToolCallFromRefusal(text string, messages []windsurfRawMessage, tools []apicompat.ChatTool) (windsurfParsedToolCall, bool) {
+	if !windsurfLooksLikeToolRefusal(text) {
+		return windsurfParsedToolCall{}, false
+	}
+	userText := windsurfLastUserMessageText(messages)
+	tool, kind, ok := windsurfSelectToolForUserIntent(userText, tools)
+	if !ok || tool == nil || tool.Function == nil {
+		return windsurfParsedToolCall{}, false
+	}
+	name := strings.TrimSpace(tool.Function.Name)
+	if name == "" {
+		return windsurfParsedToolCall{}, false
+	}
+	args := windsurfBuildSyntheticToolArguments(tool, kind, userText)
+	return windsurfParsedToolCall{
+		ID:        "call_" + uuid.NewString(),
+		Name:      name,
+		Arguments: windsurfNormalizeToolCallArguments(name, args, tools),
+	}, true
+}
+
+func windsurfLooksLikeToolRefusal(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	patterns := []string{
+		"无法访问外部网站",
+		"无法访问互联网",
+		"无法实时获取",
+		"不能访问外部网站",
+		"不能联网",
+		"没有联网",
+		"无法调用工具",
+		"不能调用工具",
+		"没有工具",
+		"工具列表",
+		"真实可调用",
+		"shell_command 工具",
+		"cannot access",
+		"can't access",
+		"unable to access",
+		"do not have access",
+		"don't have access",
+		"cannot browse",
+		"can't browse",
+		"no browser",
+		"no web access",
+		"no tool",
+		"tools are unavailable",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(normalized, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func windsurfLastUserMessageText(messages []windsurfRawMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.ToLower(strings.TrimSpace(messages[i].Role)) != "user" {
+			continue
+		}
+		text := strings.TrimSpace(messages[i].Content)
+		if text == "" || strings.HasPrefix(text, "<tool_result") {
+			continue
+		}
+		return text
+	}
+	return ""
+}
+
+func windsurfSelectToolForUserIntent(userText string, tools []apicompat.ChatTool) (*apicompat.ChatTool, string, bool) {
+	userLower := strings.ToLower(userText)
+	hasURL := windsurfFirstURL(userText) != ""
+	webIntent := hasURL || windsurfContainsAny(userLower, "优惠码", "优惠", "活动", "搜索", "查找", "查询", "联网", "实时", "最新", "官网", "网站", "网页", "价格", "coupon", "discount", "promo", "search", "web", "browse")
+	projectIntent := windsurfContainsAny(userLower, "项目", "代码", "文件", "目录", "仓库", "读取", "打开", "分析", "执行", "运行", "命令", "终端", "shell", "bash", "read", "file", "project", "repo", "command")
+
+	if webIntent {
+		if tool, ok := windsurfFindToolByNameHints(tools, "websearch", "web_search", "searchweb", "search"); ok {
+			return tool, "web_search", true
+		}
+		if tool, ok := windsurfFindToolByNameHints(tools, "webfetch", "web_fetch", "fetch", "browser"); ok {
+			return tool, "web_fetch", true
+		}
+	}
+	if projectIntent {
+		if tool, ok := windsurfFindToolByNameHints(tools, "shellcommand", "shell", "bash", "terminal", "runcommand", "execute"); ok {
+			return tool, "shell", true
+		}
+		if tool, ok := windsurfFindToolByNameHints(tools, "list", "glob", "ls"); ok {
+			return tool, "list", true
+		}
+		if tool, ok := windsurfFindToolByNameHints(tools, "read", "readfile", "openfile"); ok {
+			return tool, "read", true
+		}
+	}
+	return nil, "", false
+}
+
+func windsurfFindToolByNameHints(tools []apicompat.ChatTool, hints ...string) (*apicompat.ChatTool, bool) {
+	normalizedHints := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		if normalized := windsurfNormalizeToolName(hint); normalized != "" {
+			normalizedHints = append(normalizedHints, normalized)
+		}
+	}
+	for i := range tools {
+		if tools[i].Type != "function" || tools[i].Function == nil {
+			continue
+		}
+		normalizedName := windsurfNormalizeToolName(tools[i].Function.Name)
+		if normalizedName == "" {
+			continue
+		}
+		for _, hint := range normalizedHints {
+			if normalizedName == hint || strings.Contains(normalizedName, hint) || strings.Contains(hint, normalizedName) {
+				return &tools[i], true
+			}
+		}
+	}
+	return nil, false
+}
+
+func windsurfNormalizeToolName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func windsurfContainsAny(text string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(text, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
+func windsurfBuildSyntheticToolArguments(tool *apicompat.ChatTool, kind, userText string) string {
+	if tool == nil || tool.Function == nil {
+		return "{}"
+	}
+	props, required := windsurfToolSchemaShape(tool.Function.Parameters)
+	args := map[string]any{}
+	query := strings.TrimSpace(userText)
+	url := windsurfFirstURL(userText)
+	command := windsurfSyntheticShellCommand(userText)
+	fill := func(name string, value any) {
+		if name == "" || value == nil {
+			return
+		}
+		if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
+			return
+		}
+		args[name] = value
+	}
+	fillByMeaning := func(name string) {
+		normalized := windsurfNormalizeToolName(name)
+		switch {
+		case strings.Contains(normalized, "description"):
+			fill(name, windsurfSyntheticToolDescription(kind, userText))
+		case strings.Contains(normalized, "query") || strings.Contains(normalized, "search"):
+			fill(name, query)
+		case strings.Contains(normalized, "url") || strings.Contains(normalized, "uri"):
+			fill(name, firstNonEmpty(url, query))
+		case strings.Contains(normalized, "command") || normalized == "cmd" || strings.Contains(normalized, "script"):
+			fill(name, command)
+		case strings.Contains(normalized, "pattern") || strings.Contains(normalized, "glob"):
+			fill(name, "**/*")
+		case strings.Contains(normalized, "path") || strings.Contains(normalized, "file"):
+			fill(name, ".")
+		case strings.Contains(normalized, "limit") || strings.Contains(normalized, "max"):
+			fill(name, 20)
+		default:
+			fill(name, query)
+		}
+	}
+	for _, name := range required {
+		fillByMeaning(name)
+	}
+	if len(props) > 0 {
+		switch kind {
+		case "web_search":
+			for _, name := range props {
+				if strings.Contains(windsurfNormalizeToolName(name), "query") || strings.Contains(windsurfNormalizeToolName(name), "search") {
+					fill(name, query)
+					break
+				}
+			}
+		case "web_fetch":
+			for _, name := range props {
+				if strings.Contains(windsurfNormalizeToolName(name), "url") || strings.Contains(windsurfNormalizeToolName(name), "uri") {
+					fill(name, firstNonEmpty(url, query))
+					break
+				}
+			}
+		case "shell":
+			for _, name := range props {
+				normalized := windsurfNormalizeToolName(name)
+				if strings.Contains(normalized, "command") || normalized == "cmd" || strings.Contains(normalized, "script") {
+					fill(name, command)
+				}
+				if strings.Contains(normalized, "description") {
+					fill(name, windsurfSyntheticToolDescription(kind, userText))
+				}
+			}
+		case "list", "read":
+			for _, name := range props {
+				normalized := windsurfNormalizeToolName(name)
+				if strings.Contains(normalized, "path") || strings.Contains(normalized, "file") {
+					fill(name, ".")
+					break
+				}
+			}
+		}
+	}
+	if len(args) == 0 {
+		switch kind {
+		case "web_search":
+			args["query"] = query
+		case "web_fetch":
+			args["url"] = firstNonEmpty(url, query)
+		case "shell":
+			args["command"] = command
+			args["description"] = windsurfSyntheticToolDescription(kind, userText)
+		default:
+			args["input"] = query
+		}
+	}
+	buf, err := json.Marshal(args)
+	if err != nil {
+		return "{}"
+	}
+	return string(buf)
+}
+
+func windsurfToolSchemaShape(raw json.RawMessage) ([]string, []string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, nil
+	}
+	props := make([]string, 0, len(schema.Properties))
+	for name := range schema.Properties {
+		if strings.TrimSpace(name) != "" {
+			props = append(props, name)
+		}
+	}
+	required := make([]string, 0, len(schema.Required))
+	for _, name := range schema.Required {
+		if strings.TrimSpace(name) != "" {
+			required = append(required, name)
+		}
+	}
+	return props, required
+}
+
+func windsurfFirstURL(text string) string {
+	fields := strings.Fields(text)
+	for _, field := range fields {
+		field = strings.Trim(field, " \t\r\n\"'`“”‘’()[]{}<>，。,.")
+		if strings.HasPrefix(strings.ToLower(field), "http://") || strings.HasPrefix(strings.ToLower(field), "https://") {
+			return field
+		}
+	}
+	return ""
+}
+
+func windsurfSyntheticShellCommand(userText string) string {
+	lower := strings.ToLower(userText)
+	if windsurfContainsAny(lower, "分析", "项目", "代码", "仓库", "目录", "project", "repo") {
+		return "pwd && find . -maxdepth 2 -type f | sort | head -200"
+	}
+	if windsurfContainsAny(lower, "列", "目录", "list", "ls") {
+		return "pwd && ls -la"
+	}
+	return "pwd"
+}
+
+func windsurfSyntheticToolDescription(kind, userText string) string {
+	switch kind {
+	case "web_search":
+		return "Search the web for the user's requested current information."
+	case "web_fetch":
+		return "Fetch the URL requested by the user."
+	case "shell":
+		return "Inspect the current workspace for the user's request."
+	default:
+		if trimmed := strings.TrimSpace(userText); trimmed != "" {
+			return trimmed
+		}
+		return "Execute the client-side tool requested by the user."
+	}
 }
 
 func windsurfParseXMLToolCalls(text string, add func(windsurfToolCallCandidate, *[]windsurfParsedToolCall) bool, calls *[]windsurfParsedToolCall) string {

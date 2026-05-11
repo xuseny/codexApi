@@ -70,7 +70,7 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 md:grid-cols-3 lg:grid-cols-6" data-tour="account-form-platform">
+        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -108,56 +108,6 @@
               />
             </svg>
             OpenAI
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'windsurf'; accountCategory = 'oauth-based'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'windsurf'
-                ? 'bg-white text-cyan-600 shadow-sm dark:bg-dark-600 dark:text-cyan-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.7"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3 12c2.25-2 4.5-2 6.75 0s4.5 2 6.75 0S21 10 21 10M3 16c2.25-2 4.5-2 6.75 0s4.5 2 6.75 0S21 14 21 14"
-              />
-            </svg>
-            Windsurf
-          </button>
-          <button
-            type="button"
-            @click="form.platform = 'kiro'; accountCategory = 'oauth-based'"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
-              form.platform === 'kiro'
-                ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <svg
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.7"
-            >
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 6v12M18 6 8 12l10 6" />
-              <circle cx="6" cy="6" r="2" fill="currentColor" stroke="none" />
-              <circle cx="6" cy="18" r="2" fill="currentColor" stroke="none" />
-              <circle cx="18" cy="6" r="2" fill="currentColor" stroke="none" />
-              <circle cx="18" cy="18" r="2" fill="currentColor" stroke="none" />
-            </svg>
-            Kiro
           </button>
           <button
             type="button"
@@ -200,68 +150,10 @@
         </div>
       </div>
 
-      <!-- Account Type Selection (Windsurf) -->
-      <div v-if="form.platform === 'windsurf'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
-          <button
-            type="button"
-            @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-900/20'
-                : 'border-gray-200 hover:border-cyan-300 dark:border-dark-600 dark:hover:border-cyan-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-cyan-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="link" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">账号池</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">Token / 邮箱登录</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">OpenAI-compatible</span>
-            </div>
-          </button>
-        </div>
-      </div>
-
       <!-- Account Type Selection (Anthropic) -->
       <div v-if="form.platform === 'anthropic'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="account-form-type">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -352,6 +244,39 @@
             </div>
           </button>
 
+          <button
+            type="button"
+            @click="accountCategory = 'service_account'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'service_account'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'service_account'
+                  ? 'bg-sky-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">Vertex</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">Service Account</span>
+            </div>
+          </button>
+
+        </div>
+
+        <div
+          v-if="accountCategory === 'service_account'"
+          class="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800/40 dark:bg-sky-900/20 dark:text-sky-200"
+        >
+          <p>{{ t('admin.accounts.vertexAnthropicHint') }}</p>
         </div>
       </div>
 
@@ -410,64 +335,7 @@
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
             </div>
           </button>
-        </div>
-      </div>
 
-      <!-- Account Type Selection (Kiro) -->
-      <div v-if="form.platform === 'kiro'">
-        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
-          <button
-            type="button"
-            @click="accountCategory = 'oauth-based'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
-                ? 'border-rose-500 bg-rose-50 dark:bg-rose-900/20'
-                : 'border-gray-200 hover:border-rose-300 dark:border-dark-600 dark:hover:border-rose-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
-                  ? 'bg-rose-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="link" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">AWS Builder ID</span>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            @click="accountCategory = 'apikey'"
-            :class="[
-              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'apikey'
-                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                : 'border-gray-200 hover:border-purple-300 dark:border-dark-600 dark:hover:border-purple-700'
-            ]"
-          >
-            <div
-              :class="[
-                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'apikey'
-                  ? 'bg-purple-500 text-white'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
-              ]"
-            >
-              <Icon name="key" size="sm" />
-            </div>
-            <div>
-              <span class="block text-sm font-medium text-gray-900 dark:text-white">API Key</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">OpenAI-compatible</span>
-            </div>
-          </button>
         </div>
       </div>
 
@@ -486,7 +354,7 @@
             {{ t('admin.accounts.gemini.helpButton') }}
           </button>
         </div>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'"
@@ -558,6 +426,36 @@
               </span>
             </div>
           </button>
+
+          <button
+            type="button"
+            @click="accountCategory = 'service_account'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'service_account'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                accountCategory === 'service_account'
+                  ? 'bg-sky-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                Vertex
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                Service Account
+              </span>
+            </div>
+          </button>
         </div>
 
         <div
@@ -575,6 +473,13 @@
               {{ t('admin.accounts.gemini.accountType.apiKeyLink') }}
             </a>
           </div>
+        </div>
+
+        <div
+          v-if="accountCategory === 'service_account'"
+          class="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:border-sky-800/40 dark:bg-sky-900/20 dark:text-sky-200"
+        >
+          <p>{{ t('admin.accounts.vertexGeminiHint') }}</p>
         </div>
 
         <!-- OAuth Type Selection (only show when oauth-based is selected) -->
@@ -776,7 +681,7 @@
         </div>
 
         <!-- Tier selection (used as fallback when auto-detection is unavailable/fails) -->
-        <div class="mt-4">
+        <div v-if="accountCategory !== 'service_account'" class="mt-4">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
             <select
@@ -892,6 +797,96 @@
             placeholder="sk-..."
           />
           <p class="input-hint">{{ t('admin.accounts.upstream.apiKeyHint') }}</p>
+        </div>
+      </div>
+
+      <!-- Vertex Service Account -->
+      <div v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'" class="space-y-4">
+        <div>
+          <label class="input-label">Service Account JSON</label>
+          <input
+            ref="vertexServiceAccountFileInput"
+            type="file"
+            accept="application/json,.json"
+            class="hidden"
+            @change="handleVertexServiceAccountFile"
+          />
+          <div
+            :class="[
+              'rounded-lg border-2 border-dashed px-4 py-5 transition-colors',
+              vertexServiceAccountDragActive
+                ? 'border-sky-500 bg-sky-50 dark:border-sky-500 dark:bg-sky-900/20'
+                : 'border-gray-300 bg-gray-50 hover:border-sky-400 hover:bg-sky-50/60 dark:border-dark-500 dark:bg-dark-700/40 dark:hover:border-sky-600 dark:hover:bg-sky-900/10'
+            ]"
+            @dragenter.prevent="vertexServiceAccountDragActive = true"
+            @dragover.prevent="vertexServiceAccountDragActive = true"
+            @dragleave.prevent="vertexServiceAccountDragActive = false"
+            @drop.prevent="handleVertexServiceAccountDrop"
+          >
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+                  <Icon name="upload" size="sm" />
+                  <span>{{ vertexClientEmail ? t('admin.accounts.vertexSaJsonLoaded') : t('admin.accounts.vertexSaJsonDrop') }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ vertexClientEmail ? t('admin.accounts.vertexSaJsonKeyHidden') : t('admin.accounts.vertexSaJsonDropHint') }}
+                </p>
+              </div>
+              <button
+                type="button"
+                class="btn btn-secondary shrink-0"
+                @click="vertexServiceAccountFileInput?.click()"
+              >
+                <Icon name="upload" size="sm" />
+                {{ t('admin.accounts.vertexSaJsonSelectBtn') }}
+              </button>
+            </div>
+            <div
+              v-if="vertexClientEmail"
+              class="mt-3 rounded-md border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900 dark:border-sky-800/50 dark:bg-dark-800 dark:text-sky-200"
+            >
+              <div class="truncate">Project ID: <span class="font-mono">{{ vertexProjectId }}</span></div>
+              <div class="truncate">Client Email: <span class="font-mono">{{ vertexClientEmail }}</span></div>
+            </div>
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.vertexSaJsonUploadHint') }}</p>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">Project ID</label>
+            <input
+              v-model="vertexProjectId"
+              type="text"
+              class="input font-mono"
+              readonly
+              :placeholder="t('admin.accounts.vertexProjectIdPlaceholder')"
+            />
+          </div>
+          <div>
+            <label class="input-label">Location</label>
+            <select
+              v-model="vertexLocation"
+              required
+              class="input font-mono"
+            >
+              <optgroup
+                v-for="group in VERTEX_LOCATION_OPTIONS"
+                :key="group.label"
+                :label="group.label"
+              >
+                <option
+                  v-for="option in group.options"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </optgroup>
+            </select>
+            <p class="input-hint">{{ t('admin.accounts.vertexLocationHint') }}</p>
+          </div>
         </div>
       </div>
 
@@ -1013,92 +1008,6 @@
         </div>
       </div>
 
-      <!-- Windsurf built-in account pool login -->
-      <div v-if="form.platform === 'windsurf' && accountCategory === 'oauth-based'" class="space-y-4">
-        <div>
-          <label class="input-label">登录方式</label>
-          <div class="mt-2 grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              @click="windsurfLoginMode = 'token'"
-              :class="[
-                'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                windsurfLoginMode === 'token'
-                  ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              Token
-            </button>
-            <button
-              type="button"
-              @click="windsurfLoginMode = 'email'"
-              :class="[
-                'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                windsurfLoginMode === 'email'
-                  ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              邮箱
-            </button>
-            <button
-              type="button"
-              @click="windsurfLoginMode = 'api_key'"
-              :class="[
-                'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                windsurfLoginMode === 'api_key'
-                  ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-              ]"
-            >
-              API Key
-            </button>
-          </div>
-        </div>
-
-        <div v-if="windsurfLoginMode === 'token'">
-          <label class="input-label">Windsurf Token</label>
-          <input
-            v-model="windsurfToken"
-            type="password"
-            class="input font-mono"
-            placeholder="windsurf.com/editor/show-auth-token"
-          />
-          <p class="input-hint">推荐使用 Token 入池，后端会注册为可调度的 Windsurf OAuth 账号。</p>
-        </div>
-
-        <div v-else-if="windsurfLoginMode === 'email'" class="grid gap-4 md:grid-cols-2">
-          <div>
-            <label class="input-label">邮箱</label>
-            <input v-model="windsurfEmail" type="email" class="input" placeholder="name@example.com" />
-          </div>
-          <div>
-            <label class="input-label">密码</label>
-            <input v-model="windsurfPassword" type="password" class="input" autocomplete="current-password" />
-          </div>
-        </div>
-
-        <div v-else>
-          <label class="input-label">Windsurf API Key / Session Token</label>
-          <input
-            v-model="windsurfApiKey"
-            type="password"
-            class="input font-mono"
-            placeholder="sk-ws-... / devin-session-token$..."
-          />
-        </div>
-
-        <div
-          v-if="windsurfAuthError"
-          class="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-        >
-          <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-            {{ windsurfAuthError }}
-          </p>
-        </div>
-      </div>
-
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
         <div>
@@ -1112,11 +1021,7 @@
                 ? 'https://api.openai.com'
                 : form.platform === 'gemini'
                   ? 'https://generativelanguage.googleapis.com'
-                  : form.platform === 'windsurf'
-                    ? 'http://localhost:3003'
-                    : form.platform === 'kiro'
-                      ? 'http://localhost:8000'
-                      : 'https://api.anthropic.com'
+                  : 'https://api.anthropic.com'
             "
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
@@ -1133,11 +1038,7 @@
                 ? 'sk-proj-...'
                 : form.platform === 'gemini'
                   ? 'AIza...'
-                  : form.platform === 'windsurf'
-                    ? 'sk-...'
-                    : form.platform === 'kiro'
-                      ? 'sk-...'
-                      : 'sk-ant-...'
+                  : 'sk-ant-...'
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
@@ -1843,7 +1744,7 @@
 
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
-        v-if="isOpenAICompatibleOAuthAccount"
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
@@ -2840,7 +2741,6 @@
           v-model="form.group_ids"
           :groups="groups"
           :platform="form.platform"
-          :platforms="selectableGroupPlatforms"
           :mixed-scheduling="mixedScheduling"
           data-tour="account-form-groups"
         />
@@ -2850,108 +2750,7 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
-      <div
-        v-if="isKiroOAuthFlow"
-        class="rounded-lg border border-rose-200 bg-rose-50 p-4 dark:border-rose-700 dark:bg-rose-900/30"
-      >
-        <div class="flex items-start gap-4">
-          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-500">
-            <Icon name="link" size="md" class="text-white" />
-          </div>
-          <div class="flex-1 space-y-4">
-            <h4 class="font-semibold text-rose-900 dark:text-rose-200">Kiro OAuth</h4>
-            <div class="grid gap-3 md:grid-cols-2">
-              <div>
-                <label class="input-label">Start URL</label>
-                <input
-                  v-model="kiroStartUrl"
-                  type="text"
-                  class="input"
-                  placeholder="https://view.awsapps.com/start"
-                />
-              </div>
-              <div>
-                <label class="input-label">Region</label>
-                <input v-model="kiroRegion" type="text" class="input" placeholder="us-east-1" />
-              </div>
-            </div>
-            <button
-              v-if="!currentAuthUrl"
-              type="button"
-              :disabled="currentOAuthLoading"
-              class="btn btn-primary text-sm"
-              @click="handleGenerateUrl"
-            >
-              <svg
-                v-if="currentOAuthLoading"
-                class="-ml-1 mr-2 h-4 w-4 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                ></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <Icon v-else name="link" size="sm" class="mr-2" />
-              {{ currentOAuthLoading ? t('admin.accounts.oauth.generating') : t('admin.accounts.oauth.generateAuthUrl') }}
-            </button>
-            <div v-else class="space-y-3">
-              <div>
-                <label class="input-label">Verification URL</label>
-                <input
-                  :value="currentAuthUrl"
-                  readonly
-                  type="text"
-                  class="input bg-white font-mono text-xs dark:bg-gray-800"
-                />
-              </div>
-              <div v-if="kiroUserCode">
-                <label class="input-label">User Code</label>
-                <input
-                  :value="kiroUserCode"
-                  readonly
-                  type="text"
-                  class="input bg-white font-mono text-sm dark:bg-gray-800"
-                />
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <a
-                  :href="currentAuthUrl"
-                  target="_blank"
-                  rel="noreferrer"
-                  class="btn btn-primary text-sm"
-                >
-                  打开授权链接
-                </a>
-                <button type="button" class="btn btn-secondary text-sm" @click="handleGenerateUrl">
-                  <Icon name="refresh" size="sm" class="mr-2" />
-                  {{ t('admin.accounts.oauth.regenerate') }}
-                </button>
-              </div>
-            </div>
-            <div
-              v-if="currentOAuthError"
-              class="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30"
-            >
-              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">
-                {{ currentOAuthError }}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
       <OAuthAuthorizationFlow
-        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -2966,6 +2765,7 @@
         :show-mobile-refresh-token-option="form.platform === 'openai'"
         :show-session-token-option="false"
         :show-access-token-option="false"
+        :show-codex-session-import-option="form.platform === 'openai'"
         :platform="form.platform"
         :show-project-id="geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
@@ -2973,6 +2773,7 @@
         @validate-refresh-token="handleValidateRefreshToken"
         @validate-mobile-refresh-token="handleOpenAIValidateMobileRT"
         @validate-session-token="handleValidateSessionToken"
+        @import-codex-session="handleOpenAIImportCodexSession"
       />
 
     </div>
@@ -3313,16 +3114,14 @@ import {
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
-import { useWindsurfAuth, type WindsurfLoginMode } from '@/composables/useWindsurfAuth'
-import { useKiroOAuth } from '@/composables/useKiroOAuth'
 import type {
   Proxy,
   AdminGroup,
   AccountPlatform,
-  GroupPlatform,
   AccountType,
   CheckMixedChannelResponse,
   CreateAccountRequest,
+  CodexSessionImportMessage,
   OpenAICompactMode
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -3336,6 +3135,7 @@ import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -3355,6 +3155,7 @@ interface OAuthFlowExposed {
   sessionKey: string
   refreshToken: string
   sessionToken: string
+  codexSession: string
   inputMethod: AuthInputMethod
   reset: () => void
 }
@@ -3366,7 +3167,6 @@ const oauthStepTitle = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
-  if (form.platform === 'kiro') return 'Kiro OAuth'
   return t('admin.accounts.oauth.title')
 })
 
@@ -3374,14 +3174,12 @@ const oauthStepTitle = computed(() => {
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
-  if (form.platform === 'windsurf' || form.platform === 'kiro') return t('admin.accounts.upstream.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
-  if (form.platform === 'windsurf' || form.platform === 'kiro') return t('admin.accounts.upstream.apiKeyHint')
   return t('admin.accounts.apiKeyHint')
 })
 
@@ -3404,15 +3202,12 @@ const oauth = useAccountOAuth() // For Anthropic OAuth
 const openaiOAuth = useOpenAIOAuth() // For OpenAI OAuth
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
-const windsurfAuth = useWindsurfAuth() // For Windsurf built-in account pool
-const kiroOAuth = useKiroOAuth() // For Kiro OAuth
 
 // Computed: current OAuth state for template binding
 const currentAuthUrl = computed(() => {
   if (form.platform === 'openai') return openaiOAuth.authUrl.value
   if (form.platform === 'gemini') return geminiOAuth.authUrl.value
   if (form.platform === 'antigravity') return antigravityOAuth.authUrl.value
-  if (form.platform === 'kiro') return kiroOAuth.authUrl.value
   return oauth.authUrl.value
 })
 
@@ -3420,7 +3215,6 @@ const currentSessionId = computed(() => {
   if (form.platform === 'openai') return openaiOAuth.sessionId.value
   if (form.platform === 'gemini') return geminiOAuth.sessionId.value
   if (form.platform === 'antigravity') return antigravityOAuth.sessionId.value
-  if (form.platform === 'kiro') return kiroOAuth.sessionId.value
   return oauth.sessionId.value
 })
 
@@ -3428,7 +3222,6 @@ const currentOAuthLoading = computed(() => {
   if (form.platform === 'openai') return openaiOAuth.loading.value
   if (form.platform === 'gemini') return geminiOAuth.loading.value
   if (form.platform === 'antigravity') return antigravityOAuth.loading.value
-  if (form.platform === 'kiro') return kiroOAuth.loading.value
   return oauth.loading.value
 })
 
@@ -3436,7 +3229,6 @@ const currentOAuthError = computed(() => {
   if (form.platform === 'openai') return openaiOAuth.error.value
   if (form.platform === 'gemini') return geminiOAuth.error.value
   if (form.platform === 'antigravity') return antigravityOAuth.error.value
-  if (form.platform === 'kiro') return kiroOAuth.error.value
   return oauth.error.value
 })
 
@@ -3459,17 +3251,10 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
-const windsurfLoginMode = ref<WindsurfLoginMode>('token')
-const windsurfToken = ref('')
-const windsurfEmail = ref('')
-const windsurfPassword = ref('')
-const windsurfApiKey = ref('')
-const kiroStartUrl = ref('')
-const kiroRegion = ref('us-east-1')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -3515,7 +3300,6 @@ adminAPI.settings.getWebSearchEmulationConfig().then(cfg => {
 loadQuotaNotifyGlobal()
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
-const windsurfAssignableGroupPlatforms: GroupPlatform[] = ['windsurf', 'openai', 'anthropic']
 const antigravityAccountType = ref<'oauth' | 'upstream'>('oauth') // For antigravity: oauth or upstream
 const upstreamBaseUrl = ref('') // For upstream type: base URL
 const upstreamApiKey = ref('') // For upstream type: API key
@@ -3533,6 +3317,12 @@ const bedrockSessionToken = ref('')
 const bedrockRegion = ref('us-east-1')
 const bedrockForceGlobal = ref(false)
 const bedrockApiKeyValue = ref('')
+const vertexServiceAccountFileInput = ref<HTMLInputElement | null>(null)
+const vertexServiceAccountJson = ref('')
+const vertexProjectId = ref('')
+const vertexClientEmail = ref('')
+const vertexLocation = ref('global')
+const vertexServiceAccountDragActive = ref(false)
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-model-mapping')
@@ -3640,10 +3430,6 @@ const openAIWSModeConcurrencyHintKey = computed(() =>
 const isOpenAIModelRestrictionDisabled = computed(() =>
   form.platform === 'openai' && openaiPassthroughEnabled.value
 )
-const isOpenAICompatibleOAuthAccount = computed(() =>
-  accountCategory.value === 'oauth-based' &&
-  (form.platform === 'openai' || form.platform === 'windsurf')
-)
 
 const mixedChannelWarningMessageText = computed(() => {
   if (mixedChannelWarningDetails.value) {
@@ -3714,22 +3500,8 @@ const form = reactive({
   expires_at: null as number | null
 })
 
-const selectableGroupPlatforms = computed<GroupPlatform[] | undefined>(() => {
-  if (form.platform === 'windsurf') {
-    return windsurfAssignableGroupPlatforms
-  }
-  return undefined
-})
-
-const isKiroOAuthFlow = computed(() => form.platform === 'kiro' && accountCategory.value === 'oauth-based')
-const kiroUserCode = computed(() => kiroOAuth.userCode.value)
-const windsurfAuthError = computed(() => windsurfAuth.error.value)
-
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
-  if (form.platform === 'windsurf') {
-    return false
-  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -3742,7 +3514,6 @@ const isOAuthFlow = computed(() => {
 })
 
 const isManualInputMethod = computed(() => {
-  if (isKiroOAuthFlow.value) return true
   return oauthFlowRef.value?.inputMethod === 'manual'
 })
 
@@ -3763,9 +3534,6 @@ const canExchangeCode = computed(() => {
   }
   if (form.platform === 'antigravity') {
     return authCode.trim() && antigravityOAuth.sessionId.value && !antigravityOAuth.loading.value
-  }
-  if (form.platform === 'kiro') {
-    return kiroOAuth.sessionId.value && !kiroOAuth.loading.value
   }
   return authCode.trim() && oauth.sessionId.value && !oauth.loading.value
 })
@@ -3801,7 +3569,7 @@ watch(
 
 // Sync form.type based on accountCategory, addMethod, and platform-specific type
 watch(
-  [accountCategory, addMethod, antigravityAccountType],
+  [accountCategory, addMethod, antigravityAccountType, () => form.platform],
   ([category, method, agType]) => {
     // Antigravity upstream 类型（实际创建为 apikey）
     if (form.platform === 'antigravity' && agType === 'upstream') {
@@ -3813,11 +3581,9 @@ watch(
       form.type = 'bedrock' as AccountType
       return
     }
-    if (form.platform !== 'anthropic' && category === 'oauth-based') {
-      form.type = 'oauth'
-      return
-    }
-    if (category === 'oauth-based') {
+    if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
+      form.type = 'service_account' as AccountType
+    } else if (category === 'oauth-based') {
       form.type = method as AccountType // 'oauth' or 'setup-token'
     } else {
       form.type = 'apikey'
@@ -3836,11 +3602,7 @@ watch(
         ? 'https://api.openai.com'
         : newPlatform === 'gemini'
           ? 'https://generativelanguage.googleapis.com'
-          : newPlatform === 'windsurf'
-            ? ''
-            : newPlatform === 'kiro'
-              ? ''
-              : 'https://api.anthropic.com'
+          : 'https://api.anthropic.com'
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -3853,23 +3615,17 @@ watch(
       antigravityWhitelistModels.value = []
       accountCategory.value = 'oauth-based'
       antigravityAccountType.value = 'oauth'
-    } else if (newPlatform === 'kiro') {
-      accountCategory.value = 'oauth-based'
-      allowOverages.value = false
-      antigravityWhitelistModels.value = []
-      antigravityModelMappings.value = []
-      antigravityModelRestrictionMode.value = 'mapping'
-    } else if (newPlatform === 'windsurf') {
-      accountCategory.value = 'oauth-based'
-      allowOverages.value = false
-      antigravityWhitelistModels.value = []
-      antigravityModelMappings.value = []
-      antigravityModelRestrictionMode.value = 'mapping'
     } else {
       allowOverages.value = false
       antigravityWhitelistModels.value = []
       antigravityModelMappings.value = []
       antigravityModelRestrictionMode.value = 'mapping'
+    }
+    if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
+      accountCategory.value = 'oauth-based'
+    }
+    if (newPlatform !== 'anthropic' && accountCategory.value === 'bedrock') {
+      accountCategory.value = 'oauth-based'
     }
     // Reset Bedrock fields when switching platforms
     bedrockAccessKeyId.value = ''
@@ -3879,6 +3635,10 @@ watch(
     bedrockForceGlobal.value = false
     bedrockAuthMode.value = 'sigv4'
     bedrockApiKeyValue.value = ''
+    vertexServiceAccountJson.value = ''
+    vertexProjectId.value = ''
+    vertexClientEmail.value = ''
+    vertexLocation.value = 'global'
     // Reset Anthropic/Antigravity-specific settings when switching to other platforms
     if (newPlatform !== 'anthropic' && newPlatform !== 'antigravity') {
       interceptWarmupRequests.value = false
@@ -3890,7 +3650,6 @@ watch(
       codexCLIOnlyEnabled.value = false
     }
     if (newPlatform !== 'anthropic') {
-      addMethod.value = 'oauth'
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
     }
@@ -3900,8 +3659,6 @@ watch(
 
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
-    windsurfAuth.resetState()
-    kiroOAuth.resetState()
   }
 )
 
@@ -4257,13 +4014,6 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
-  windsurfLoginMode.value = 'token'
-  windsurfToken.value = ''
-  windsurfEmail.value = ''
-  windsurfPassword.value = ''
-  windsurfApiKey.value = ''
-  kiroStartUrl.value = ''
-  kiroRegion.value = 'us-east-1'
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4320,6 +4070,10 @@ const resetForm = () => {
   antigravityAccountType.value = 'oauth'
   upstreamBaseUrl.value = ''
   upstreamApiKey.value = ''
+  vertexServiceAccountJson.value = ''
+  vertexProjectId.value = ''
+  vertexClientEmail.value = ''
+  vertexLocation.value = 'global'
   tempUnschedEnabled.value = false
   tempUnschedRules.value = []
   geminiOAuthType.value = 'code_assist'
@@ -4330,8 +4084,6 @@ const resetForm = () => {
   openaiOAuth.resetState()
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
-  windsurfAuth.resetState()
-  kiroOAuth.resetState()
   oauthFlowRef.value?.reset()
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
@@ -4445,54 +4197,50 @@ const normalizePoolModeRetryCount = (value: number) => {
   return normalized
 }
 
-const handleWindsurfBuiltinCreate = async () => {
-  if (!form.name.trim()) {
-    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
-    return
+const applyVertexServiceAccountJson = (value: string) => {
+  const raw = value.trim()
+  if (!raw) {
+    vertexProjectId.value = ''
+    vertexClientEmail.value = ''
+    return false
   }
-
-  const payload: Parameters<typeof windsurfAuth.login>[0] = {}
-  if (form.proxy_id) {
-    payload.proxy_id = form.proxy_id
-  }
-  if (windsurfLoginMode.value === 'token') {
-    if (!windsurfToken.value.trim()) {
-      appStore.showError('请输入 Windsurf Token')
-      return
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const projectId = typeof parsed.project_id === 'string' ? parsed.project_id.trim() : ''
+    const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : ''
+    const privateKey = typeof parsed.private_key === 'string' ? parsed.private_key.trim() : ''
+    if (!projectId || !clientEmail || !privateKey) {
+      appStore.showError(t('admin.accounts.vertexSaJsonMissingFields'))
+      return false
     }
-    payload.token = windsurfToken.value.trim()
-  } else if (windsurfLoginMode.value === 'email') {
-    if (!windsurfEmail.value.trim() || !windsurfPassword.value) {
-      appStore.showError('请输入 Windsurf 邮箱和密码')
-      return
-    }
-    payload.email = windsurfEmail.value.trim()
-    payload.password = windsurfPassword.value
-  } else {
-    if (!windsurfApiKey.value.trim()) {
-      appStore.showError('请输入 Windsurf API Key')
-      return
-    }
-    payload.api_key = windsurfApiKey.value.trim()
+    vertexProjectId.value = projectId
+    vertexClientEmail.value = clientEmail
+    vertexServiceAccountJson.value = JSON.stringify(parsed)
+    return true
+  } catch {
+    appStore.showError(t('admin.accounts.vertexSaJsonInvalid'))
+    return false
   }
+}
 
-  const tokenInfo = await windsurfAuth.login(payload)
-  if (!tokenInfo) return
+const parseVertexServiceAccountJson = () => applyVertexServiceAccountJson(vertexServiceAccountJson.value)
 
-  const credentials = windsurfAuth.buildCredentials(tokenInfo)
-  const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
-  if (modelMapping) {
-    credentials.model_mapping = modelMapping
+const handleVertexServiceAccountFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    applyVertexServiceAccountJson(await file.text())
+  } finally {
+    input.value = ''
   }
-  if (poolModeEnabled.value) {
-    credentials.pool_mode = true
-    credentials.pool_mode_retry_count = normalizePoolModeRetryCount(poolModeRetryCount.value)
-  }
-  if (!applyTempUnschedConfig(credentials)) {
-    return
-  }
+}
 
-  await createAccountAndFinish('windsurf', 'oauth', credentials)
+const handleVertexServiceAccountDrop = async (event: DragEvent) => {
+  vertexServiceAccountDragActive.value = false
+  const file = event.dataTransfer?.files?.[0]
+  if (!file) return
+  applyVertexServiceAccountJson(await file.text())
 }
 
 const handleSubmit = async () => {
@@ -4509,11 +4257,6 @@ const handleSubmit = async () => {
       return
     }
     step.value = 2
-    return
-  }
-
-  if (form.platform === 'windsurf' && accountCategory.value === 'oauth-based') {
-    await handleWindsurfBuiltinCreate()
     return
   }
 
@@ -4613,13 +4356,32 @@ const handleSubmit = async () => {
     return
   }
 
+  if ((form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory.value === 'service_account') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!parseVertexServiceAccountJson()) {
+      return
+    }
+    if (!vertexLocation.value.trim()) {
+      appStore.showError(t('admin.accounts.vertexLocationRequired'))
+      return
+    }
+    const credentials: Record<string, unknown> = {
+      service_account_json: vertexServiceAccountJson.value.trim(),
+      project_id: vertexProjectId.value.trim(),
+      client_email: vertexClientEmail.value.trim(),
+      location: vertexLocation.value.trim(),
+      tier_id: 'vertex'
+    }
+    await createAccountAndFinish(form.platform, 'service_account' as AccountType, credentials)
+    return
+  }
+
   // For apikey type, create directly
   if (!apiKeyValue.value.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
-    return
-  }
-  if ((form.platform === 'windsurf' || form.platform === 'kiro') && !apiKeyBaseUrl.value.trim()) {
-    appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
     return
   }
 
@@ -4629,11 +4391,7 @@ const handleSubmit = async () => {
       ? 'https://api.openai.com'
       : form.platform === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
-        : form.platform === 'windsurf'
-          ? ''
-          : form.platform === 'kiro'
-            ? ''
-            : 'https://api.anthropic.com'
+        : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -4692,8 +4450,6 @@ const goBackToBasicInfo = () => {
   openaiOAuth.resetState()
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
-  windsurfAuth.resetState()
-  kiroOAuth.resetState()
   oauthFlowRef.value?.reset()
 }
 
@@ -4709,12 +4465,6 @@ const handleGenerateUrl = async () => {
     )
   } else if (form.platform === 'antigravity') {
     await antigravityOAuth.generateAuthUrl(form.proxy_id)
-  } else if (form.platform === 'kiro') {
-    await kiroOAuth.startDeviceAuth({
-      startUrl: kiroStartUrl.value,
-      region: kiroRegion.value,
-      proxyId: form.proxy_id
-    })
   } else {
     await oauth.generateAuthUrl(addMethod.value, form.proxy_id)
   }
@@ -4884,6 +4634,113 @@ const handleOpenAIExchange = async (authCode: string) => {
 // OpenAI 手动 RT 批量验证和创建
 // OpenAI Mobile RT client_id
 const OPENAI_MOBILE_RT_CLIENT_ID = 'app_LlGpXReQgckcGGUo2JrYvtJK'
+
+const buildOpenAICodexImportCredentialExtras = (): Record<string, unknown> | null => {
+  const credentials: Record<string, unknown> = {}
+  if (!isOpenAIModelRestrictionDisabled.value) {
+    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+  }
+
+  const compactModelMapping = buildOpenAICompactModelMapping()
+  if (compactModelMapping) {
+    credentials.compact_model_mapping = compactModelMapping
+  }
+
+  if (!applyTempUnschedConfig(credentials)) {
+    return null
+  }
+  return credentials
+}
+
+const formatCodexImportMessages = (messages?: CodexSessionImportMessage[]) => {
+  return (messages || [])
+    .map((item) => {
+      const name = item.name ? ` ${item.name}` : ''
+      return `#${item.index}${name}: ${item.message}`
+    })
+    .join('\n')
+}
+
+const handleOpenAIImportCodexSession = async (content: string) => {
+  const oauthClient = openaiOAuth
+  const trimmed = content.trim()
+  if (!trimmed) {
+    oauthClient.error.value = t('admin.accounts.oauth.openai.codexSessionEmpty')
+    return
+  }
+
+  const credentialExtras = buildOpenAICodexImportCredentialExtras()
+  if (credentialExtras === null) {
+    return
+  }
+
+  oauthClient.loading.value = true
+  oauthClient.error.value = ''
+
+  try {
+    const extra = buildOpenAIExtra()
+    const result = await adminAPI.accounts.importCodexSession({
+      content: trimmed,
+      name: form.name,
+      notes: form.notes || null,
+      proxy_id: form.proxy_id,
+      concurrency: form.concurrency,
+      load_factor: form.load_factor ?? undefined,
+      priority: form.priority,
+      rate_multiplier: form.rate_multiplier,
+      group_ids: form.group_ids,
+      expires_at: form.expires_at,
+      auto_pause_on_expired: autoPauseOnExpired.value,
+      credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
+      extra,
+      update_existing: true
+    })
+
+    const successCount = result.created + result.updated
+    const params = {
+      created: result.created,
+      updated: result.updated,
+      skipped: result.skipped,
+      failed: result.failed
+    }
+
+    if (successCount > 0 && result.failed === 0) {
+      appStore.showSuccess(t('admin.accounts.oauth.openai.codexSessionImportSuccess', params))
+      emit('created')
+      handleClose()
+      return
+    }
+
+    const errorText = formatCodexImportMessages(result.errors)
+    const warningText = formatCodexImportMessages(result.warnings)
+    oauthClient.error.value = [errorText, warningText].filter(Boolean).join('\n')
+
+    if (result.failed === 0) {
+      appStore.showWarning(t('admin.accounts.oauth.openai.codexSessionImportSuccess', params))
+      return
+    }
+
+    if (successCount > 0) {
+      appStore.showWarning(t('admin.accounts.oauth.openai.codexSessionImportPartial', params))
+      emit('created')
+      return
+    }
+
+    appStore.showError(t('admin.accounts.oauth.openai.codexSessionImportFailed'))
+  } catch (error: any) {
+    oauthClient.error.value =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      t('admin.accounts.oauth.openai.codexSessionImportFailed')
+    appStore.showError(oauthClient.error.value)
+  } finally {
+    oauthClient.loading.value = false
+  }
+}
 
 // OpenAI RT 批量验证和创建（共享逻辑）
 const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string) => {
@@ -5179,14 +5036,6 @@ const handleAntigravityExchange = async (authCode: string) => {
 }
 
 // Anthropic OAuth 授权码兑换
-const handleKiroExchange = async () => {
-  const tokenInfo = await kiroOAuth.exchangeDeviceCode()
-  if (!tokenInfo) return
-
-  const credentials = kiroOAuth.buildCredentials(tokenInfo)
-  await createAccountAndFinish('kiro', 'oauth', credentials)
-}
-
 const handleAnthropicExchange = async (authCode: string) => {
   if (!authCode.trim() || !oauth.sessionId.value) return
 
@@ -5286,8 +5135,6 @@ const handleExchangeCode = async () => {
       return handleGeminiExchange(authCode)
     case 'antigravity':
       return handleAntigravityExchange(authCode)
-    case 'kiro':
-      return handleKiroExchange()
     default:
       return handleAnthropicExchange(authCode)
   }

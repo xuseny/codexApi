@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -49,10 +50,6 @@ type TestEvent struct {
 	Error    string `json:"error,omitempty"`
 }
 
-type accountTestTokenProvider interface {
-	GetAccessToken(ctx context.Context, account *Account) (string, error)
-}
-
 const (
 	defaultGeminiTextTestPrompt  = "hi"
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
@@ -64,12 +61,23 @@ func isOpenAIImageModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-image-")
 }
 
+type claudeAccountTestTokenProvider interface {
+	GetAccessToken(ctx context.Context, account *Account) (string, error)
+}
+
+type openAIAccountTestTokenProvider interface {
+	GetAccessToken(ctx context.Context, account *Account) (string, error)
+}
+
+type geminiAccountTestTokenProvider interface {
+	GetAccessToken(ctx context.Context, account *Account) (string, error)
+}
+
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
-	claudeTokenProvider       accountTestTokenProvider
-	openAITokenProvider       accountTestTokenProvider
-	geminiTokenProvider       accountTestTokenProvider
+	geminiTokenProvider       *GeminiTokenProvider
+	claudeTokenProvider       *ClaudeTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
@@ -79,9 +87,8 @@ type AccountTestService struct {
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
-	claudeTokenProvider accountTestTokenProvider,
-	openAITokenProvider accountTestTokenProvider,
-	geminiTokenProvider accountTestTokenProvider,
+	geminiTokenProvider *GeminiTokenProvider,
+	claudeTokenProvider *ClaudeTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
@@ -89,9 +96,8 @@ func NewAccountTestService(
 ) *AccountTestService {
 	return &AccountTestService{
 		accountRepo:               accountRepo,
-		claudeTokenProvider:       claudeTokenProvider,
-		openAITokenProvider:       openAITokenProvider,
 		geminiTokenProvider:       geminiTokenProvider,
+		claudeTokenProvider:       claudeTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
@@ -186,10 +192,6 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
-	if account.IsWindsurf() {
-		return s.testWindsurfAccountConnection(c, account, modelID, prompt)
-	}
-
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -224,25 +226,20 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if account.IsBedrock() {
 		return s.testBedrockAccountConnection(c, ctx, account, testModelID)
 	}
+	if account.Type == AccountTypeServiceAccount {
+		return s.testClaudeVertexServiceAccountConnection(c, ctx, account, testModelID)
+	}
 
 	// Determine authentication method and API URL
 	var authToken string
 	var useBearer bool
 	var apiURL string
-	var err error
 
 	if account.IsOAuth() {
 		// OAuth or Setup Token - use Bearer token
 		useBearer = true
 		apiURL = testClaudeAPIURL
-		if account.Type == AccountTypeOAuth && s.claudeTokenProvider != nil {
-			authToken, err = s.claudeTokenProvider.GetAccessToken(ctx, account)
-			if err != nil {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", err.Error()))
-			}
-		} else {
-			authToken = account.GetCredential("access_token")
-		}
+		authToken = account.GetCredential("access_token")
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
@@ -332,6 +329,74 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	}
 
 	// Process SSE stream
+	return s.processClaudeStream(c, resp.Body)
+}
+
+func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Context, ctx context.Context, account *Account, testModelID string) error {
+	if mappedModel, matched := account.ResolveMappedModel(testModelID); matched {
+		testModelID = mappedModel
+	} else {
+		testModelID = normalizeVertexAnthropicModelID(claude.NormalizeModelID(testModelID))
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	payload, err := createTestPayload(testModelID)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create test payload")
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	vertexBody, err := buildVertexAnthropicRequestBody(payloadBytes)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to create Vertex request body: %s", err.Error()))
+	}
+
+	if s.claudeTokenProvider == nil {
+		return s.sendErrorAndEnd(c, "Claude token provider not configured")
+	}
+	accessToken, err := s.claudeTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get service account access token: %s", err.Error()))
+	}
+
+	fullURL, err := buildVertexAnthropicURL(account.VertexProjectID(), account.VertexLocation(testModelID), testModelID, true)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build Vertex URL: %s", err.Error()))
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(vertexBody))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusForbidden {
+			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+		}
+		return s.sendErrorAndEnd(c, errMsg)
+	}
+
 	return s.processClaudeStream(c, resp.Body)
 }
 
@@ -475,19 +540,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	var apiURL string
 	var isOAuth bool
 	var chatgptAccountID string
-	var err error
 
 	if account.IsOAuth() {
 		isOAuth = true
 		// OAuth - use Bearer token with ChatGPT internal API
-		if account.Type == AccountTypeOAuth && s.openAITokenProvider != nil {
-			authToken, err = s.openAITokenProvider.GetAccessToken(ctx, account)
-			if err != nil {
-				return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get access token: %s", err.Error()))
-			}
-		} else {
-			authToken = account.GetOpenAIAccessToken()
-		}
+		authToken = account.GetOpenAIAccessToken()
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
@@ -510,7 +567,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/responses"
+		// 账号已被探测为不支持 Responses（如 DeepSeek/Kimi 等）时，丢出明确提示。
+		// 账号本身可用（网关会走 CC 直转），仅测试入口需要补齐 CC SSE 处理逻辑。
+		// TODO：实现 CC 格式的账号测试路径（需专门的 CC SSE handler）。
+		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+			return s.sendErrorAndEnd(c,
+				"账号已被探测为不支持 OpenAI Responses API（如 DeepSeek/Kimi 等三方兼容上游），"+
+					"账号本身可正常使用，但当前测试接口仅支持 Responses API 路径。请直接通过实际 API 调用验证。",
+			)
+		}
+		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -541,18 +607,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Set OAuth-specific headers for ChatGPT internal API
 	if isOAuth {
 		req.Host = "chatgpt.com"
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
 		req.Header.Set("accept", "text/event-stream")
-		req.Header.Set("originator", "codex_cli_rs")
 		if chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		}
-		customUA := account.GetOpenAIUserAgent()
-		if customUA != "" {
-			req.Header.Set("user-agent", customUA)
-		}
-		if !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
-			req.Header.Set("user-agent", codexCLIUserAgent)
 		}
 	}
 
@@ -590,72 +647,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processOpenAIStream(c, resp.Body)
-}
-
-// testWindsurfAccountConnection tests a Windsurf account pool account.
-func (s *AccountTestService) testWindsurfAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
-	ctx := c.Request.Context()
-
-	if account.Type != AccountTypeOAuth || !account.GetCredentialBool("windsurf_builtin") {
-		return s.testOpenAIAccountConnection(c, account, modelID, prompt, AccountTestModeDefault)
-	}
-
-	testModelID := strings.TrimSpace(modelID)
-	if testModelID == "" {
-		testModelID = windsurfDefaultTestModel
-	}
-	testModelID = account.GetMappedModel(testModelID)
-	modelInfo, upstreamModel, err := resolveWindsurfModel(testModelID)
-	if err != nil {
-		return s.sendErrorAndEnd(c, err.Error())
-	}
-
-	apiKey := strings.TrimSpace(firstNonEmpty(account.GetCredential("api_key"), account.GetCredential("session_token")))
-	if apiKey == "" {
-		return s.sendErrorAndEnd(c, "No Windsurf API key available")
-	}
-
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.Flush()
-
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: upstreamModel})
-
-	textPrompt := strings.TrimSpace(prompt)
-	if textPrompt == "" {
-		textPrompt = defaultGeminiTextTestPrompt
-	}
-	messages := []windsurfRawMessage{{Role: "user", Content: textPrompt}}
-
-	if strings.TrimSpace(modelInfo.ModelUID) != "" {
-		_, _, err := runWindsurfCascadeChat(ctx, account, apiKey, messages, modelInfo, func(delta string) error {
-			s.sendEvent(c, TestEvent{Type: "content", Text: delta})
-			return nil
-		})
-		if err != nil {
-			return s.sendErrorAndEnd(c, err.Error())
-		}
-		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-		return nil
-	}
-
-	protoBody := windsurfBuildRawGetChatMessageRequest(apiKey, messages, modelInfo.EnumValue, modelInfo.Name, uuid.NewString())
-	req, _, err := buildWindsurfGRPCRequest(ctx, account, windsurfRawGetChatMessagePath, protoBody)
-	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build Windsurf request: %s", err.Error()))
-	}
-	resp, err := newWindsurfGRPCClient().Do(req)
-	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf language server request failed: %s", err.Error()))
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf language server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
-	}
-	return s.processWindsurfRawStream(c, resp.Body)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -816,8 +807,8 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// For API Key accounts with model mapping, map the model
-	if account.Type == AccountTypeAPIKey {
+	// For static upstream credentials with model mapping, map the model
+	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
 		mapping := account.GetModelMapping()
 		if len(mapping) > 0 {
 			if mappedModel, exists := mapping[testModelID]; exists {
@@ -845,6 +836,8 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 		req, err = s.buildGeminiAPIKeyRequest(ctx, account, testModelID, payload)
 	case AccountTypeOAuth:
 		req, err = s.buildGeminiOAuthRequest(ctx, account, testModelID, payload)
+	case AccountTypeServiceAccount:
+		req, err = s.buildGeminiServiceAccountRequest(ctx, account, testModelID, payload)
 	default:
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -996,6 +989,27 @@ func (s *AccountTestService) buildGeminiOAuthRequest(ctx context.Context, accoun
 
 	// Code Assist mode (with project_id)
 	return s.buildCodeAssistRequest(ctx, accessToken, projectID, modelID, payload)
+}
+
+func (s *AccountTestService) buildGeminiServiceAccountRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
+	if s.geminiTokenProvider == nil {
+		return nil, fmt.Errorf("gemini token provider not configured")
+	}
+	accessToken, err := s.geminiTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get service account access token: %w", err)
+	}
+	fullURL, err := buildVertexGeminiURL(account.VertexProjectID(), account.VertexLocation(modelID), modelID, "streamGenerateContent", true)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	return req, nil
 }
 
 // buildCodeAssistRequest builds request for Google Code Assist API (used by Gemini CLI and Antigravity)
@@ -1317,38 +1331,6 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 	}
 }
 
-func (s *AccountTestService) processWindsurfRawStream(c *gin.Context, body io.Reader) error {
-	buffer := make([]byte, 0, 32*1024)
-	tmp := make([]byte, 32*1024)
-	for {
-		n, readErr := body.Read(tmp)
-		if n > 0 {
-			buffer = append(buffer, tmp[:n]...)
-			var frames [][]byte
-			frames, buffer = windsurfDrainGRPCFrames(buffer)
-			for _, frame := range frames {
-				text, _, isErr, err := windsurfParseRawResponse(frame)
-				if err != nil {
-					return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf response parse error: %s", err.Error()))
-				}
-				if isErr {
-					return s.sendErrorAndEnd(c, "Windsurf upstream returned error frame")
-				}
-				if text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
-				}
-			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-				return nil
-			}
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Windsurf stream read error: %s", readErr.Error()))
-		}
-	}
-}
-
 // testOpenAIImageAPIKey tests OpenAI image generation using an API Key account.
 func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.Context, account *Account, modelID, prompt string) error {
 	authToken := account.GetOpenAIApiKey()
@@ -1364,7 +1346,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 	}
-	apiURL := strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/images/generations"
+	apiURL := buildOpenAIImagesURL(normalizedBaseURL, openAIImagesGenerationsEndpoint)
 
 	// Set SSE headers
 	c.Writer.Header().Set("Content-Type", "text/event-stream")

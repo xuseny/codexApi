@@ -732,36 +732,25 @@ systemctl disable sub2api
 redis-cli -h 154.64.230.47 -p 6379 -a '你的 Redis 密码' ping
 ```
 
-### 一号机：后续更新命令
+后续更新命令
 
-一号机后续更新直接用这一套：
-
-```bash
+# 1. 拉代码
 cd /root/codexApi
-git pull origin main
+git fetch origin
+git status -sb            # 看是否 [behind N]
+git pull --ff-only
 
+# 2. 重新构建镜像 + 重启容器（不停机滚动）
 cd /opt/sub2api-docker
-docker compose build sub2api
-docker compose up -d --force-recreate sub2api
+docker compose pull              # 如果用远程镜像
+docker compose up -d --build     # 本地 build：拉代码 + 重新构建 + 重启变更的容器
 
+# 3. 看状态 / 日志
 docker compose ps
-docker compose logs --tail=100 sub2api
-curl http://127.0.0.1:2127/health
+docker compose logs -f --tail=100 sub2api
 
-```
-
-### Docker 版回滚命令
-
-如果 Docker 版有问题，需要临时回滚到旧 `systemd` 二进制：
-
-```bash
-cd /opt/sub2api-docker
-docker compose down
-
-systemctl start sub2api
-systemctl enable sub2api
-systemctl status sub2api --no-pager -l
-```
+# 4. 健康检查
+curl -sS https://xuseny.online/health
 
 ## 适用范围说明
 

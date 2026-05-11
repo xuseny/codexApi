@@ -129,7 +129,7 @@ security:
     # 默认 CSP 策略（如果静态资源托管在其他域名，请自行覆盖）
     # Note: __CSP_NONCE__ will be replaced with 'nonce-xxx' at request time for inline script security
     # 注意：__CSP_NONCE__ 会在请求时被替换为 'nonce-xxx'，用于内联脚本安全
-    policy: "default-src 'self'; script-src 'self' __CSP_NONCE__ https://challenges.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    policy: "default-src 'self'; script-src 'self' __CSP_NONCE__ https://challenges.cloudflare.com https://static.cloudflareinsights.com https://*.stripe.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://static.airwallex.com https://checkout.airwallex.com https://static-demo.airwallex.com https://checkout-demo.airwallex.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https:; frame-src https://challenges.cloudflare.com https://*.stripe.com https://checkout.airwallex.com https://checkout-demo.airwallex.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   proxy_probe:
     # Allow skipping TLS verification for proxy probe (debug only)
     # 允许代理探测时跳过 TLS 证书验证（仅用于调试）
@@ -161,6 +161,33 @@ gateway:
   # Enable Gemini upstream response header debug logs (default: false)
   # 是否开启 Gemini 上游响应头调试日志（默认 false）
   gemini_debug_response_headers: false
+  # Sora max request body size in bytes (0=use max_body_size)
+  # Sora 请求体最大字节数（0=使用 max_body_size）
+  sora_max_body_size: 268435456
+  # Sora stream timeout (seconds, 0=disable)
+  # Sora 流式请求总超时（秒，0=禁用）
+  sora_stream_timeout_seconds: 900
+  # Sora non-stream timeout (seconds, 0=disable)
+  # Sora 非流式请求超时（秒，0=禁用）
+  sora_request_timeout_seconds: 180
+  # Sora stream enforcement mode: force/error
+  # Sora stream 强制策略：force/error
+  sora_stream_mode: "force"
+  # Sora model filters
+  # Sora 模型过滤配置
+  sora_model_filters:
+    # Hide prompt-enhance models by default
+    # 默认隐藏 prompt-enhance 模型
+    hide_prompt_enhance: true
+  # Require API key for /sora/media proxy (default: false)
+  # /sora/media 是否强制要求 API Key（默认 true）
+  sora_media_require_api_key: true
+  # Sora media temporary signing key (empty disables signed URL)
+  # Sora 媒体临时签名密钥（为空则禁用签名）
+  sora_media_signing_key: ""
+  # Signed URL TTL seconds (<=0 disables)
+  # 临时签名 URL 有效期（秒，<=0 表示禁用）
+  sora_media_signed_url_ttl_seconds: 900
   # Connection pool isolation strategy:
   # 连接池隔离策略：
   # - proxy: Isolate by proxy, same proxy shares connection pool (suitable for few proxies, many accounts)
@@ -175,6 +202,40 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
+  # Enable Codex image-generation bridge injection for /openai/v1/responses.
+  # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
+  #
+  # Default false keeps text-only Codex requests text-only. Explicit client-provided
+  # image_generation tools are still forwarded when the group allows image generation.
+  # 默认 false：保持纯文本 Codex 请求不被改写；客户端显式提供 image_generation tool 时，
+  # 仍会在分组允许图片生成的情况下正常转发。
+  codex_image_generation_bridge_enabled: false
+  # Optional: template file used to build the final top-level Codex `instructions`.
+  # 可选：用于构建最终 Codex 顶层 `instructions` 的模板文件路径。
+  #
+  # This is applied on the `/v1/messages -> Responses/Codex` conversion path,
+  # after Claude `system` has already been normalized into Codex `instructions`.
+  # 该模板作用于 `/v1/messages -> Responses/Codex` 转换链路，且发生在 Claude `system`
+  # 已经被归一化为 Codex `instructions` 之后。
+  #
+  # The template can reference:
+  # 模板可引用：
+  # - {{ .ExistingInstructions }} : converted client instructions/system
+  # - {{ .OriginalModel }}        : original requested model
+  # - {{ .NormalizedModel }}      : normalized routing model
+  # - {{ .BillingModel }}         : billing model
+  # - {{ .UpstreamModel }}        : final upstream model
+  #
+  # If you want to preserve client system prompts, keep {{ .ExistingInstructions }}
+  # somewhere in the template. If omitted, the template output fully replaces it.
+  # 如需保留客户端 system 提示词，请在模板中显式包含 {{ .ExistingInstructions }}。
+  # 若省略，则模板输出会完全覆盖它。
+  #
+  # Docker users can mount a host file to /app/data/codex-instructions.md.tmpl
+  # and point this field there.
+  # Docker 用户可将宿主机文件挂载到 /app/data/codex-instructions.md.tmpl，
+  # 然后把本字段指向该路径。
+  forced_codex_instructions_template_file: ""
   # OpenAI 透传模式是否放行客户端超时头（如 x-stainless-timeout）
   # 默认 false：过滤超时头，降低上游提前断流风险。
   openai_passthrough_allow_timeout_headers: false
@@ -287,6 +348,30 @@ gateway:
   # Stream keepalive interval (seconds), 0=disable
   # 流式 keepalive 间隔（秒），0=禁用
   stream_keepalive_interval: 10
+  # Image stream data interval timeout (seconds), 0=disable; independent from ordinary text streams
+  # 图片流数据间隔超时（秒），0=禁用；独立于普通文本流式
+  image_stream_data_interval_timeout: 900
+  # Image stream keepalive interval (seconds), 0=disable; independent from ordinary text streams
+  # 图片流式 keepalive 间隔（秒），0=禁用；独立于普通文本流式
+  image_stream_keepalive_interval: 10
+  # Image generation independent concurrency limiter (process-local, default disabled)
+  # 图片生成独立并发限制（进程级，默认关闭；多实例总上限约为实例数×该值）
+  image_concurrency:
+    # Enable image-only concurrency protection; false keeps existing behavior unchanged
+    # 是否启用图片独立并发保护；false 保持现有行为不变
+    enabled: false
+    # Max concurrent image generation requests in this process, 0=unlimited
+    # 当前进程允许同时处理的图片生成请求数，0=不限制
+    max_concurrent_requests: 0
+    # Overflow mode when the image concurrency limit is full: reject/wait
+    # 图片并发满时的处理方式：reject=立即拒绝，wait=等待槽位
+    overflow_mode: "reject"
+    # Wait timeout for overflow_mode=wait (seconds), 0=do not wait
+    # wait 模式等待图片并发槽位的超时时间（秒），0=不等待
+    wait_timeout_seconds: 30
+    # Max image requests waiting in this process when overflow_mode=wait, 0=unlimited
+    # wait 模式当前进程允许排队等待的图片请求数，0=不限制
+    max_waiting_requests: 100
   # SSE max line size in bytes (default: 40MB)
   # SSE 单行最大字节数（默认 40MB）
   max_line_size: 41943040
@@ -417,14 +502,112 @@ log:
     thereafter: 100
 
 # =============================================================================
+# Sora Direct Client Configuration
+# Sora 直连配置
+# =============================================================================
+sora:
+  client:
+    # Sora backend base URL
+    # Sora 上游 Base URL
+    base_url: "https://sora.chatgpt.com/backend"
+    # Request timeout (seconds)
+    # 请求超时（秒）
+    timeout_seconds: 120
+    # Max retries for upstream requests
+    # 上游请求最大重试次数
+    max_retries: 3
+    # Account+proxy cooldown window after Cloudflare challenge (seconds, 0 to disable)
+    # Cloudflare challenge 后按账号+代理冷却窗口（秒，0 表示关闭）
+    cloudflare_challenge_cooldown_seconds: 900
+    # Poll interval (seconds)
+    # 轮询间隔（秒）
+    poll_interval_seconds: 2
+    # Max poll attempts
+    # 最大轮询次数
+    max_poll_attempts: 600
+    # Recent task query limit (image)
+    # 最近任务查询数量（图片轮询）
+    recent_task_limit: 50
+    # Recent task query max limit (fallback)
+    # 最近任务查询最大数量（回退）
+    recent_task_limit_max: 200
+    # Enable debug logs for Sora upstream requests
+    # 启用 Sora 直连调试日志
+    # 调试日志会输出上游请求尝试、重试、响应摘要；Authorization/openai-sentinel-token 等敏感头会自动脱敏
+    debug: false
+    # Allow Sora client to fetch token via OpenAI token provider
+    # 是否允许 Sora 客户端通过 OpenAI token provider 取 token（默认 false，避免误走 OpenAI 刷新链路）
+    use_openai_token_provider: false
+    # Optional custom headers (key-value)
+    # 额外请求头（键值对）
+    headers: {}
+    # Default User-Agent for Sora requests
+    # Sora 默认 User-Agent
+    user_agent: "Sora/1.2026.007 (Android 15; 24122RKC7C; build 2600700)"
+    # Disable TLS fingerprint for Sora upstream
+    # 关闭 Sora 上游 TLS 指纹伪装
+    disable_tls_fingerprint: false
+    # curl_cffi sidecar for Sora only (required)
+    # 仅 Sora 链路使用的 curl_cffi sidecar（必需）
+    curl_cffi_sidecar:
+      # Sora 强制通过 sidecar 请求，必须启用
+      # Sora is forced to use sidecar only; keep enabled=true
+      enabled: true
+      # Sidecar base URL (default endpoint: /request)
+      # sidecar 基础地址（默认请求端点：/request）
+      base_url: "http://sora-curl-cffi-sidecar:8080"
+      # curl_cffi impersonate profile, e.g. chrome131/chrome124/safari18_0
+      # curl_cffi 指纹伪装 profile，例如 chrome131/chrome124/safari18_0
+      impersonate: "chrome131"
+      # Sidecar request timeout (seconds)
+      # sidecar 请求超时（秒）
+      timeout_seconds: 60
+      # Reuse session key per account+proxy to let sidecar persist cookies/session
+      # 按账号+代理复用 session key，让 sidecar 持久化 cookies/session
+      session_reuse_enabled: true
+      # Session TTL in sidecar (seconds)
+      # sidecar 会话 TTL（秒）
+      session_ttl_seconds: 3600
+  storage:
+    # Storage type (local only for now)
+    # 存储类型（首发仅支持 local）
+    type: "local"
+    # Local base path; empty uses /app/data/sora
+    # 本地存储基础路径；为空使用 /app/data/sora
+    local_path: ""
+    # Fallback to upstream URL when download fails
+    # 下载失败时回退到上游 URL
+    fallback_to_upstream: true
+    # Max concurrent downloads
+    # 并发下载上限
+    max_concurrent_downloads: 4
+    # Download timeout (seconds)
+    # 下载超时（秒）
+    download_timeout_seconds: 120
+    # Max download bytes
+    # 最大下载字节数
+    max_download_bytes: 209715200
+    # Enable debug logs for media storage
+    # 启用媒体存储调试日志
+    debug: false
+    cleanup:
+      # Enable cleanup task
+      # 启用清理任务
+      enabled: true
+      # Retention days
+      # 保留天数
+      retention_days: 7
+      # Cron schedule
+      # Cron 调度表达式
+      schedule: "0 3 * * *"
+
 # Token refresh behavior
 # token 刷新行为控制
 token_refresh:
-  enabled: true
-  check_interval_minutes: 5
-  refresh_before_expiry_hours: 0.5
-  max_retries: 3
-  retry_backoff_seconds: 2
+  # Whether OpenAI refresh flow is allowed to sync linked Sora accounts
+  # 是否允许 OpenAI 刷新流程同步覆盖 linked_openai_account_id 关联的 Sora 账号 token
+  sync_linked_sora_accounts: false
+
 # =============================================================================
 # API Key Auth Cache Configuration
 # API Key 认证缓存配置
@@ -690,7 +873,47 @@ linuxdo_connect:
   frontend_redirect_url: "/auth/linuxdo/callback"
   token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
   # 注意：当 token_auth_method=none（public client）时，必须启用 PKCE
+  use_pkce: true
+  userinfo_email_path: ""
+  userinfo_id_path: ""
+  userinfo_username_path: ""
+
+# =============================================================================
+# Generic OIDC OAuth Login (SSO)
+# 通用 OIDC OAuth 登录（用于 Sub2API 用户登录）
+# =============================================================================
+oidc_connect:
+  enabled: false
+  provider_name: "OIDC"
+  client_id: ""
+  client_secret: ""
+  # 例如: "https://keycloak.example.com/realms/myrealm"
+  issuer_url: ""
+  # 可选: OIDC Discovery URL。为空时可手动填写 authorize/token/userinfo/jwks
+  discovery_url: ""
+  authorize_url: ""
+  token_url: ""
+  # 可选（仅补充 email/username，不用于 sub 可信绑定）
+  userinfo_url: ""
+  # validate_id_token=true 时必填
+  jwks_url: ""
+  scopes: "openid email profile"
+  # 示例: "https://your-domain.com/api/v1/auth/oauth/oidc/callback"
+  redirect_url: ""
+  # 安全提示：
+  # - 建议使用同源相对路径（以 / 开头），避免把 token 重定向到意外的第三方域名
+  # - 该地址不应包含 #fragment（本实现使用 URL fragment 传递 access_token）
+  frontend_redirect_url: "/auth/oidc/callback"
+  token_auth_method: "client_secret_post" # client_secret_post | client_secret_basic | none
+  # 注意：当 token_auth_method=none（public client）时，必须启用 PKCE
   use_pkce: false
+  # 开启后强制校验 id_token 的签名和 claims（推荐）
+  validate_id_token: true
+  allowed_signing_algs: "RS256,ES256,PS256"
+  # 允许的时钟偏移（秒）
+  clock_skew_seconds: 120
+  # 若 Provider 返回 email_verified=false，是否拒绝登录
+  require_email_verified: false
   userinfo_email_path: ""
   userinfo_id_path: ""
   userinfo_username_path: ""
@@ -740,10 +963,10 @@ rate_limit:
 pricing:
   # URL to fetch model pricing data (default: pinned model-price-repo commit)
   # 获取模型定价数据的 URL（默认：固定 commit 的 model-price-repo）
-  remote_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/c7947e9871687e664180bc971d4837f1fc2784a9/model_prices_and_context_window.json"
+  remote_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/refs/heads/main//model_prices_and_context_window.json"
   # Hash verification URL (optional)
   # 哈希校验 URL（可选）
-  hash_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/c7947e9871687e664180bc971d4837f1fc2784a9/model_prices_and_context_window.sha256"
+  hash_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/refs/heads/main//model_prices_and_context_window.sha256"
   # Local data directory for caching
   # 本地数据缓存目录
   data_dir: "./data"

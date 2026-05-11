@@ -32,41 +32,42 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIWSFlags(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
-func TestBuildSchedulerMetadataAccount_KeepsWindsurfRoutingFlag(t *testing.T) {
+func TestBuildSchedulerMetadataAccount_KeepsSlimGroupMembership(t *testing.T) {
 	account := service.Account{
-		ID:       6335,
-		Platform: service.PlatformWindsurf,
-		Type:     service.AccountTypeOAuth,
-		Credentials: map[string]any{
-			"windsurf_builtin": true,
-			"access_token":     "secret-token",
-		},
-	}
-
-	got := buildSchedulerMetadataAccount(account)
-
-	require.True(t, got.GetCredentialBool("windsurf_builtin"))
-	require.True(t, got.IsWindsurfBuiltinOAuth())
-	require.Empty(t, got.GetCredential("access_token"))
-}
-
-func TestBuildSchedulerMetadataAccount_KeepsRPMFields(t *testing.T) {
-	account := service.Account{
-		ID:       7,
+		ID:       42,
 		Platform: service.PlatformAnthropic,
-		Type:     service.AccountTypeOAuth,
-		Extra: map[string]any{
-			"base_rpm":          15,
-			"rpm_strategy":      "sticky_exempt",
-			"rpm_sticky_buffer": 5,
-			"unused_large_key":  "drop-me",
+		GroupIDs: []int64{7, 9, 7, 0},
+		AccountGroups: []service.AccountGroup{
+			{
+				AccountID: 42,
+				GroupID:   7,
+				Priority:  2,
+				Account:   &service.Account{ID: 42, Name: "drop-from-metadata"},
+				Group:     &service.Group{ID: 7, Name: "drop-from-metadata"},
+			},
+			{
+				AccountID: 42,
+				GroupID:   11,
+				Priority:  3,
+				Group:     &service.Group{ID: 11, Name: "drop-from-metadata"},
+			},
+			{
+				AccountID: 42,
+				GroupID:   0,
+				Priority:  4,
+			},
 		},
 	}
 
 	got := buildSchedulerMetadataAccount(account)
 
-	require.Equal(t, 15, got.GetBaseRPM())
-	require.Equal(t, "sticky_exempt", got.GetRPMStrategy())
-	require.Equal(t, 5, got.GetRPMStickyBuffer())
-	require.Nil(t, got.Extra["unused_large_key"])
+	require.Equal(t, []int64{7, 9, 11}, got.GroupIDs)
+	require.Len(t, got.AccountGroups, 2)
+	require.Equal(t, int64(42), got.AccountGroups[0].AccountID)
+	require.Equal(t, int64(7), got.AccountGroups[0].GroupID)
+	require.Equal(t, 2, got.AccountGroups[0].Priority)
+	require.Nil(t, got.AccountGroups[0].Account)
+	require.Nil(t, got.AccountGroups[0].Group)
+	require.Equal(t, int64(11), got.AccountGroups[1].GroupID)
+	require.Nil(t, got.Groups)
 }

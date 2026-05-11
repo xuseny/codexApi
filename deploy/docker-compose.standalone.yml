@@ -95,12 +95,15 @@ services:
       - ANTIGRAVITY_OAUTH_CLIENT_SECRET=${ANTIGRAVITY_OAUTH_CLIENT_SECRET:-}
 
       # =======================================================================
-      # Windsurf Built-in Account Pool
+      # Image Generation Stream & Concurrency
       # =======================================================================
-      - WINDSURF_LS_BINARY_PATH=${WINDSURF_LS_BINARY_PATH:-/app/data/windsurf/language_server_linux_x64}
-      - WINDSURF_LS_DATA_DIR=${WINDSURF_LS_DATA_DIR:-/app/data/windsurf/ls}
-      - WINDSURF_LS_API_SERVER_URL=${WINDSURF_LS_API_SERVER_URL:-https://server.self-serve.windsurf.com}
-      - WINDSURF_CLIENT_VERSION=${WINDSURF_CLIENT_VERSION:-2.0.67}
+      - GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT=${GATEWAY_IMAGE_STREAM_DATA_INTERVAL_TIMEOUT:-900}
+      - GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL=${GATEWAY_IMAGE_STREAM_KEEPALIVE_INTERVAL:-10}
+      - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}
+      - GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS:-0}
+      - GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE=${GATEWAY_IMAGE_CONCURRENCY_OVERFLOW_MODE:-reject}
+      - GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS=${GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS:-30}
+      - GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS:-100}
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s

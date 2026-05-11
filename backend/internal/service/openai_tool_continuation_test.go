@@ -22,6 +22,7 @@ func TestNeedsToolContinuationSignals(t *testing.T) {
 		{name: "mcp_tool_call_output", body: map[string]any{"input": []any{map[string]any{"type": "mcp_tool_call_output"}}}, want: true},
 		{name: "item_reference", body: map[string]any{"input": []any{map[string]any{"type": "item_reference"}}}, want: true},
 		{name: "tools", body: map[string]any{"tools": []any{map[string]any{"type": "function"}}}, want: true},
+		{name: "tools_image_generation", body: map[string]any{"tools": []any{map[string]any{"type": "image_generation"}}}, want: false},
 		{name: "tools_empty", body: map[string]any{"tools": []any{}}, want: false},
 		{name: "tools_invalid", body: map[string]any{"tools": "bad"}, want: false},
 		{name: "tool_choice", body: map[string]any{"tool_choice": "auto"}, want: true},

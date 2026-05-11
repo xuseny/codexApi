@@ -258,6 +258,58 @@ func TestWindsurfParseToolCallsDetailedReportsUnparsedMarker(t *testing.T) {
 	require.Contains(t, cleaned, "function_call")
 }
 
+func TestWindsurfSynthesizeToolCallFromWebRefusal(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name:        "websearch",
+			Description: "Search the web",
+			Parameters:  json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`),
+		},
+	}}
+	call, ok := windsurfSynthesizeToolCallFromRefusal(
+		"我无法访问外部网站，也无法实时获取优惠码信息。",
+		[]windsurfRawMessage{{Role: "user", Content: "https://cloud.speedidc.cn 帮我找下这个网站的优惠码"}},
+		tools,
+	)
+
+	require.True(t, ok)
+	require.Equal(t, "websearch", call.Name)
+	require.JSONEq(t, `{"query":"https://cloud.speedidc.cn 帮我找下这个网站的优惠码"}`, call.Arguments)
+}
+
+func TestWindsurfSynthesizeToolCallFromShellRefusalAddsDescription(t *testing.T) {
+	tools := []apicompat.ChatTool{{
+		Type: "function",
+		Function: &apicompat.ChatFunction{
+			Name:       "bash",
+			Parameters: json.RawMessage(`{"type":"object","required":["command","description"],"properties":{"command":{"type":"string"},"description":{"type":"string"}}}`),
+		},
+	}}
+	call, ok := windsurfSynthesizeToolCallFromRefusal(
+		"当前这个会话里，系统实际没有给我开放 shell_command 工具。",
+		[]windsurfRawMessage{{Role: "user", Content: "分析下项目 你能调用什么工具"}},
+		tools,
+	)
+
+	require.True(t, ok)
+	require.Equal(t, "bash", call.Name)
+	require.JSONEq(t, `{"command":"pwd && find . -maxdepth 2 -type f | sort | head -200","description":"Inspect the current workspace for the user's request."}`, call.Arguments)
+}
+
+func TestWindsurfResponsesToolsToChatToolsKeepsNamedNonFunctionTools(t *testing.T) {
+	tools := windsurfResponsesToolsToChatTools([]apicompat.ResponsesTool{{
+		Type:        "web_search",
+		Name:        "websearch",
+		Description: "Search the web",
+		Parameters:  json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string"}}}`),
+	}})
+
+	require.Len(t, tools, 1)
+	require.Equal(t, "function", tools[0].Type)
+	require.Equal(t, "websearch", tools[0].Function.Name)
+}
+
 func TestWindsurfToolBridgeEmptyFallbackText(t *testing.T) {
 	require.Equal(
 		t,

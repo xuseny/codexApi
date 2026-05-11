@@ -881,7 +881,9 @@ func (e *openAIResponsesTurnExecutor) ExecuteTurn(ctx context.Context, req *apic
 		if err := json.Unmarshal(body, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal responses request: %w", err)
 		}
-		codexResult := applyCodexOAuthTransform(reqBody, false, false)
+		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+			PreserveToolCallIDs: true,
+		})
 		if codexResult.NormalizedModel != "" {
 			request.Model = codexResult.NormalizedModel
 		}
@@ -905,6 +907,9 @@ func (e *openAIResponsesTurnExecutor) ExecuteTurn(ctx context.Context, req *apic
 	resp, err := e.service.httpUpstream.Do(upstreamReq, proxyURL, e.account.ID, e.account.Concurrency)
 	if err != nil {
 		return nil, fmt.Errorf("upstream request failed: %w", err)
+	}
+	if resp == nil {
+		return nil, errors.New("upstream request returned nil response")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
@@ -1283,13 +1288,13 @@ func (r *serverToolRuntime) execBash(ctx context.Context, args map[string]any) (
 	}
 	if err != nil {
 		return map[string]any{
-			"command":    command,
-			"workdir":    workdir,
-			"stdout":     text,
-			"truncated":  truncated,
-			"exit_code":  exitCode,
-			"timed_out":  errors.Is(toolCtx.Err(), context.DeadlineExceeded),
-			"succeeded":  false,
+			"command":   command,
+			"workdir":   workdir,
+			"stdout":    text,
+			"truncated": truncated,
+			"exit_code": exitCode,
+			"timed_out": errors.Is(toolCtx.Err(), context.DeadlineExceeded),
+			"succeeded": false,
 		}, err
 	}
 	return map[string]any{
@@ -1348,10 +1353,10 @@ func (r *serverToolRuntime) execWebSearch(ctx context.Context, args map[string]a
 		return nil, err
 	}
 	return map[string]any{
-		"query":     query,
-		"provider":  providerName,
-		"summary":   buildTextSummary(query, resp.Results),
-		"results":   resp.Results,
+		"query":    query,
+		"provider": providerName,
+		"summary":  buildTextSummary(query, resp.Results),
+		"results":  resp.Results,
 	}, nil
 }
 

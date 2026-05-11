@@ -273,8 +273,19 @@ func hasToolsSignal(reqBody map[string]any) bool {
 	if !exists || raw == nil {
 		return false
 	}
-	if tools, ok := raw.([]any); ok {
-		return len(tools) > 0
+	tools, ok := raw.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolType, _ := tool["type"].(string)
+		if strings.TrimSpace(toolType) == "function" {
+			return true
+		}
 	}
 	return false
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"log/slog"
 	"math"
 	"sort"
 	"strconv"
@@ -35,19 +36,6 @@ type cachedOpenAIAdvancedSchedulerSetting struct {
 
 var openAIAdvancedSchedulerSettingCache atomic.Value // *cachedOpenAIAdvancedSchedulerSetting
 var openAIAdvancedSchedulerSettingSF singleflight.Group
-
-type OpenAIAccountScheduleRequest struct {
-	Platform                string
-	GroupID                 *int64
-	SessionHash             string
-	StickyAccountID         int64
-	PreviousResponseID      string
-	RequestedModel          string
-	RequiredTransport       OpenAIUpstreamTransport
-	RequiredImageCapability OpenAIImagesCapability
-	RequireCompact          bool
-	ExcludedIDs             map[int64]struct{}
-}
 
 func normalizeOpenAICompatiblePlatform(platform string) string {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
@@ -90,6 +78,19 @@ func isOpenAICompatibleAccountForPlatform(account *Account, platform string) boo
 	default:
 		return account.Platform == PlatformOpenAI
 	}
+}
+
+type OpenAIAccountScheduleRequest struct {
+	Platform                string
+	GroupID                 *int64
+	SessionHash             string
+	StickyAccountID         int64
+	PreviousResponseID      string
+	RequestedModel          string
+	RequiredTransport       OpenAIUpstreamTransport
+	RequiredImageCapability OpenAIImagesCapability
+	RequireCompact          bool
+	ExcludedIDs             map[int64]struct{}
 }
 
 type OpenAIAccountScheduleDecision struct {
@@ -390,7 +391,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
-	if !s.isAccountRequestCompatible(account, req) {
+	if !s.isAccountRequestCompatible(ctx, account, req) {
 		return nil, nil
 	}
 	if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
@@ -667,7 +668,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 			continue
 		}
-		if !s.isAccountRequestCompatible(account, req) {
+		if !s.isAccountRequestCompatible(ctx, account, req) {
 			continue
 		}
 		if !s.isAccountTransportCompatible(account, req.RequiredTransport) {
@@ -868,11 +869,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	for i := 0; i < len(selectionOrder); i++ {
 		candidate := selectionOrder[i]
 		fresh := s.service.resolveFreshSchedulableOpenAIAccountForPlatform(ctx, req.Platform, candidate.account, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
 		fresh = s.service.recheckSelectedOpenAIAccountFromDBForPlatform(ctx, req.Platform, fresh, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
 		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
@@ -899,11 +900,11 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	// WaitPlan.MaxConcurrency 使用 Concurrency（非 EffectiveLoadFactor），因为 WaitPlan 控制的是 Redis 实际并发槽位等待。
 	for _, candidate := range selectionOrder {
 		fresh := s.service.resolveFreshSchedulableOpenAIAccountForPlatform(ctx, req.Platform, candidate.account, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
 		fresh = s.service.recheckSelectedOpenAIAccountFromDBForPlatform(ctx, req.Platform, fresh, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(fresh, req) {
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 			continue
 		}
 		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
@@ -934,11 +935,19 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 	return s.service.isOpenAIAccountTransportCompatible(account, requiredTransport)
 }
 
-func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(account *Account, req OpenAIAccountScheduleRequest) bool {
+func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) bool {
 	if account == nil {
 		return false
 	}
+	if !isOpenAICompatibleAccountEligibleForRequest(account, req.Platform, req.RequestedModel, req.RequireCompact) {
+		return false
+	}
 	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
+		return false
+	}
+	if req.GroupID != nil && s != nil && s.service != nil &&
+		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
+		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
 		return false
 	}
 	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)
@@ -1166,6 +1175,13 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 			}
 			effectiveExcludedIDs[selection.Account.ID] = struct{}{}
 		}
+	}
+
+	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
+		slog.Warn("channel pricing restriction blocked request",
+			"group_id", derefGroupID(groupID),
+			"model", requestedModel)
+		return nil, decision, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
 	var stickyAccountID int64

@@ -110,13 +110,89 @@ function buildClaudeSettingsFile(baseUrl: string, apiKey: string): KeyExchangeCo
   ]
 }
 
-function buildOpenCodeFile(baseUrl: string, apiKey: string, providerId: string): KeyExchangeConfigFile[] {
+const opencodePermission = {
+  read: 'allow',
+  list: 'allow',
+  glob: 'allow',
+  grep: 'allow',
+  lsp: 'allow',
+  edit: 'ask',
+  bash: 'ask',
+  webfetch: 'ask',
+  websearch: 'ask'
+}
+
+function compactVariants(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined))
+}
+
+function openCodeModel(name: string, context: number, output: number) {
+  return {
+    name,
+    limit: {
+      context,
+      output
+    },
+    modalities: {
+      input: ['text', 'image', 'pdf'],
+      output: ['text']
+    },
+    attachment: true,
+    reasoning: true,
+    tool_call: true,
+    interleaved: true,
+    options: {
+      store: false
+    },
+    variants: compactVariants({
+      low: {},
+      medium: {},
+      high: {},
+      xhigh: {}
+    })
+  }
+}
+
+function buildOpenCodeModels(platform: GroupPlatform) {
+  if (platform === 'anthropic' || platform === 'antigravity') {
+    return {
+      'claude-opus-4-7': openCodeModel('Claude Opus 4.7', 200000, 128000),
+      'claude-opus-4-7-low': openCodeModel('Claude Opus 4.7 Low', 200000, 128000),
+      'claude-opus-4-7-medium': openCodeModel('Claude Opus 4.7 Medium', 200000, 128000),
+      'claude-opus-4-7-high': openCodeModel('Claude Opus 4.7 High', 200000, 128000),
+      'claude-opus-4-7-xhigh': openCodeModel('Claude Opus 4.7 XHigh', 200000, 128000),
+      'claude-opus-4-6': openCodeModel('Claude Opus 4.6', 200000, 128000),
+      'claude-sonnet-4-6': openCodeModel('Claude Sonnet 4.6', 200000, 64000),
+      'claude-haiku-4-5': openCodeModel('Claude Haiku 4.5', 200000, 64000)
+    }
+  }
+  if (platform === 'gemini') {
+    return {
+      'gemini-2.5-pro': openCodeModel('Gemini 2.5 Pro', 1000000, 65536),
+      'gemini-2.5-flash': openCodeModel('Gemini 2.5 Flash', 1000000, 65536)
+    }
+  }
+  return {
+    'gpt-5.5': openCodeModel('GPT-5.5', 1050000, 128000),
+    'gpt-5.4': openCodeModel('GPT-5.4', 1050000, 128000),
+    'gpt-5.4-mini': openCodeModel('GPT-5.4 Mini', 400000, 128000),
+    'gpt-5.3-codex': openCodeModel('GPT-5.3 Codex', 400000, 128000),
+    'gpt-5.3-codex-spark': openCodeModel('GPT-5.3 Codex Spark', 128000, 32000),
+    'gpt-5.2': openCodeModel('GPT-5.2', 400000, 128000),
+    'codex-mini-latest': openCodeModel('Codex Mini', 200000, 100000)
+  }
+}
+
+function buildOpenCodeFile(baseUrl: string, apiKey: string, providerId: string, platform: GroupPlatform): KeyExchangeConfigFile[] {
   const providerMap: Record<string, unknown> = {
     [providerId]: {
       options: {
         baseURL: baseUrl,
         apiKey
-      }
+      },
+      ...(platform === 'anthropic' || platform === 'antigravity' ? { npm: '@ai-sdk/anthropic' } : {}),
+      ...(platform === 'gemini' ? { npm: '@ai-sdk/google' } : {}),
+      models: buildOpenCodeModels(platform)
     }
   }
 
@@ -127,6 +203,19 @@ function buildOpenCodeFile(baseUrl: string, apiKey: string, providerId: string):
       content: JSON.stringify(
         {
           provider: providerMap,
+          agent: {
+            build: {
+              options: {
+                store: false
+              }
+            },
+            plan: {
+              options: {
+                store: false
+              }
+            }
+          },
+          permission: opencodePermission,
           $schema: 'https://opencode.ai/config.json'
         },
         null,
@@ -162,7 +251,7 @@ export function buildKeyExchangeConfigPresets(input: BuildKeyExchangeConfigInput
           id: 'opencode',
           label: 'OpenCode',
           description: '生成 OpenCode 的 opencode.json',
-          files: buildOpenCodeFile(apiBase, input.apiKey, 'openai')
+          files: buildOpenCodeFile(apiBase, input.apiKey, 'openai', 'openai')
         }
       ]
     case 'anthropic':
@@ -177,7 +266,7 @@ export function buildKeyExchangeConfigPresets(input: BuildKeyExchangeConfigInput
           id: 'opencode',
           label: 'OpenCode',
           description: '生成 OpenCode 的配置文件',
-          files: buildOpenCodeFile(apiBase, input.apiKey, 'anthropic')
+          files: buildOpenCodeFile(apiBase, input.apiKey, 'anthropic', 'anthropic')
         }
       ]
     case 'gemini':
@@ -186,7 +275,7 @@ export function buildKeyExchangeConfigPresets(input: BuildKeyExchangeConfigInput
           id: 'opencode',
           label: 'OpenCode',
           description: '生成 OpenCode 的 Gemini 配置文件',
-          files: buildOpenCodeFile(geminiBase, input.apiKey, 'gemini')
+          files: buildOpenCodeFile(geminiBase, input.apiKey, 'gemini', 'gemini')
         }
       ]
     case 'antigravity':
@@ -201,7 +290,7 @@ export function buildKeyExchangeConfigPresets(input: BuildKeyExchangeConfigInput
           id: 'opencode',
           label: 'OpenCode',
           description: '生成 OpenCode 的 Antigravity 配置文件',
-          files: buildOpenCodeFile(antigravityBase, input.apiKey, 'antigravity-claude')
+          files: buildOpenCodeFile(antigravityBase, input.apiKey, 'antigravity-claude', 'antigravity')
         }
       ]
     default:

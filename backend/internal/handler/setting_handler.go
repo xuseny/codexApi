@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SettingHandler handles public settings and public utility endpoints.
+// SettingHandler 公开设置处理器（无需认证）
 type SettingHandler struct {
 	settingService        *service.SettingService
 	apiKeyExchangeService *service.APIKeyExchangeService
@@ -17,13 +17,26 @@ type SettingHandler struct {
 	version               string
 }
 
-func NewSettingHandler(settingService *service.SettingService, apiKeyExchangeService *service.APIKeyExchangeService, usageService *service.UsageService, version string) *SettingHandler {
-	return &SettingHandler{
-		settingService:        settingService,
-		apiKeyExchangeService: apiKeyExchangeService,
-		usageService:          usageService,
-		version:               version,
+// NewSettingHandler 创建公开设置处理器
+func NewSettingHandler(settingService *service.SettingService, args ...any) *SettingHandler {
+	h := &SettingHandler{settingService: settingService}
+	switch len(args) {
+	case 1:
+		if version, ok := args[0].(string); ok {
+			h.version = version
+		}
+	case 3:
+		if svc, ok := args[0].(*service.APIKeyExchangeService); ok {
+			h.apiKeyExchangeService = svc
+		}
+		if svc, ok := args[1].(*service.UsageService); ok {
+			h.usageService = svc
+		}
+		if version, ok := args[2].(string); ok {
+			h.version = version
+		}
 	}
+	return h
 }
 
 type ResolveAPIKeyExchangeRequest struct {
@@ -43,7 +56,8 @@ type ListAPIKeyExchangeUsageLogsRequest struct {
 	PageSize int    `json:"page_size"`
 }
 
-// GetPublicSettings handles GET /api/v1/settings/public.
+// GetPublicSettings 获取公开设置
+// GET /api/v1/settings/public
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
 	if err != nil {
@@ -60,6 +74,11 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
 		TotpEnabled:                      settings.TotpEnabled,
+		LoginAgreementEnabled:            settings.LoginAgreementEnabled,
+		LoginAgreementMode:               settings.LoginAgreementMode,
+		LoginAgreementUpdatedAt:          settings.LoginAgreementUpdatedAt,
+		LoginAgreementRevision:           settings.LoginAgreementRevision,
+		LoginAgreementDocuments:          publicLoginAgreementDocumentsToDTO(settings.LoginAgreementDocuments),
 		TurnstileEnabled:                 settings.TurnstileEnabled,
 		TurnstileSiteKey:                 settings.TurnstileSiteKey,
 		SiteName:                         settings.SiteName,
@@ -83,6 +102,8 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		WeChatOAuthMobileEnabled:         settings.WeChatOAuthMobileEnabled,
 		OIDCOAuthEnabled:                 settings.OIDCOAuthEnabled,
 		OIDCOAuthProviderName:            settings.OIDCOAuthProviderName,
+		GitHubOAuthEnabled:               settings.GitHubOAuthEnabled,
+		GoogleOAuthEnabled:               settings.GoogleOAuthEnabled,
 		BackendModeEnabled:               settings.BackendModeEnabled,
 		PaymentEnabled:                   settings.PaymentEnabled,
 		Version:                          h.version,
@@ -97,6 +118,8 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
+
+		RiskControlEnabled: settings.RiskControlEnabled,
 	})
 }
 
@@ -194,4 +217,16 @@ func (h *SettingHandler) ListAPIKeyExchangeUsageLogs(c *gin.Context) {
 		return
 	}
 	response.Paginated(c, out, paginationResult.Total, paginationResult.Page, paginationResult.PageSize)
+}
+
+func publicLoginAgreementDocumentsToDTO(items []service.LoginAgreementDocument) []dto.LoginAgreementDocument {
+	result := make([]dto.LoginAgreementDocument, 0, len(items))
+	for _, item := range items {
+		result = append(result, dto.LoginAgreementDocument{
+			ID:        item.ID,
+			Title:     item.Title,
+			ContentMD: item.ContentMD,
+		})
+	}
+	return result
 }

@@ -38,6 +38,7 @@ func ProvideAdminHandlers(
 	channelHandler *admin.ChannelHandler,
 	channelMonitorHandler *admin.ChannelMonitorHandler,
 	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
+	contentModerationHandler *admin.ContentModerationHandler,
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
 ) *AdminHandlers {
@@ -71,6 +72,7 @@ func ProvideAdminHandlers(
 		Channel:                channelHandler,
 		ChannelMonitor:         channelMonitorHandler,
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
+		ContentModeration:      contentModerationHandler,
 		Payment:                paymentHandler,
 		Affiliate:              affiliateHandler,
 	}
@@ -81,8 +83,13 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 	return admin.NewSystemHandler(updateService, lockService)
 }
 
-// ProvideSettingHandler creates SettingHandler with version from BuildInfo
-func ProvideSettingHandler(settingService *service.SettingService, apiKeyExchangeService *service.APIKeyExchangeService, usageService *service.UsageService, buildInfo BuildInfo) *SettingHandler {
+// ProvideSettingHandler creates SettingHandler with version from BuildInfo.
+func ProvideSettingHandler(
+	settingService *service.SettingService,
+	apiKeyExchangeService *service.APIKeyExchangeService,
+	usageService *service.UsageService,
+	buildInfo BuildInfo,
+) *SettingHandler {
 	return NewSettingHandler(settingService, apiKeyExchangeService, usageService, buildInfo.Version)
 }
 
@@ -176,6 +183,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewChannelHandler,
 	admin.NewChannelMonitorHandler,
 	admin.NewChannelMonitorRequestTemplateHandler,
+	admin.NewContentModerationHandler,
 	admin.NewPaymentHandler,
 	admin.NewAffiliateHandler,
 

@@ -148,6 +148,10 @@ func (c *windsurfRoutingSchedulerCache) TryLockBucket(context.Context, Scheduler
 	return true, nil
 }
 
+func (c *windsurfRoutingSchedulerCache) UnlockBucket(context.Context, SchedulerBucket) error {
+	return nil
+}
+
 func (c *windsurfRoutingSchedulerCache) ListBuckets(context.Context) ([]SchedulerBucket, error) {
 	return c.buckets, nil
 }
