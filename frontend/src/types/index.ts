@@ -483,7 +483,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type GroupPlatform = 'anthropic' | 'openai' | 'windsurf' | 'kiro' | 'gemini' | 'antigravity'
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -564,6 +564,7 @@ export interface ApiKey {
   last_used_at: string | null
   quota: number // Quota limit in USD (0 = unlimited)
   quota_used: number // Used quota amount in USD
+  concurrency_limit: number
   expires_at: string | null // Expiration time (null = never expires)
   created_at: string
   updated_at: string
@@ -589,6 +590,7 @@ export interface CreateApiKeyRequest {
   ip_whitelist?: string[]
   ip_blacklist?: string[]
   quota?: number // Quota limit in USD (0 = unlimited)
+  concurrency_limit?: number
   expires_in_days?: number // Days until expiry (null = never expires)
   rate_limit_5h?: number
   rate_limit_1d?: number
@@ -602,12 +604,92 @@ export interface UpdateApiKeyRequest {
   ip_whitelist?: string[]
   ip_blacklist?: string[]
   quota?: number // Quota limit in USD (null = no change, 0 = unlimited)
+  concurrency_limit?: number
   expires_at?: string | null // Expiration time (null = no change)
   reset_quota?: boolean // Reset quota_used to 0
   rate_limit_5h?: number
   rate_limit_1d?: number
   rate_limit_7d?: number
   reset_rate_limit_usage?: boolean
+}
+
+export type APIKeyExchangeCodeStatus = 'unused' | 'activated' | 'disabled'
+
+export interface APIKeyExchangeCode {
+  id: number
+  code: string
+  owner_user_id: number
+  created_by: number | null
+  group_id: number | null
+  quota: number
+  expires_in_days: number
+  status: APIKeyExchangeCodeStatus | string
+  api_key_id: number | null
+  activated_at: string | null
+  activated_ip?: string | null
+  batch_no: string
+  notes: string
+  created_at: string
+  updated_at: string
+  group?: Group | null
+  api_key?: ApiKey | null
+}
+
+export interface GenerateAPIKeyExchangeCodesRequest {
+  count: number
+  group_id?: number | null
+  quota?: number
+  expires_in_days?: number
+  batch_no?: string
+  notes?: string
+}
+
+export interface APIKeyExchangeResolveRequest {
+  code: string
+  timezone?: string
+}
+
+export interface APIKeyExchangeResolveResponse {
+  code: string
+  status: APIKeyExchangeCodeStatus | string
+  action: 'activated' | 'queried' | string
+  activated_at: string | null
+  api_key_id: number
+  api_key: string
+  api_key_name: string
+  api_key_status: string
+  quota: number
+  quota_used: number
+  expires_at: string | null
+  today_tokens: number
+  today_actual_cost: number
+  total_actual_cost: number
+  total_requests: number
+  group?: Group | null
+}
+
+export interface APIKeyExchangeQuotaRedeemRequest {
+  exchange_code: string
+  redeem_code: string
+  timezone?: string
+}
+
+export interface APIKeyExchangeQuotaRedeemResponse {
+  amount: number
+  redeem_code: string
+  result?: APIKeyExchangeResolveResponse | null
+}
+
+export interface APIKeyExchangeUsageLog {
+  model: string
+  endpoint: string
+  group_name: string
+  request_type: string
+  tokens: number
+  first_token_ms: number | null
+  actual_cost: number
+  duration_ms: number
+  created_at: string
 }
 
 export interface CreateGroupRequest {
@@ -666,7 +748,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type AccountPlatform = 'anthropic' | 'openai' | 'windsurf' | 'kiro' | 'gemini' | 'antigravity'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1152,7 +1234,7 @@ export interface CodexSessionImportResult {
 
 // ==================== Usage & Redeem Types ====================
 
-export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation'
+export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription' | 'invitation' | 'api_key_quota'
 export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2'
 
 export interface UsageLog {
