@@ -145,6 +145,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/key-exchange',
+    name: 'KeyExchange',
+    component: () => import('@/views/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'API Key Exchange',
+    }
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),
@@ -504,6 +513,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/key-exchange',
+    name: 'AdminKeyExchange',
+    component: () => import('@/views/admin/KeyExchangeView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'API Key Exchange Codes'
+    }
+  },
+  {
     path: '/admin/promo-codes',
     name: 'AdminPromoCodes',
     component: () => import('@/views/admin/PromoCodesView.vue'),
@@ -668,7 +687,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/key-exchange', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',
