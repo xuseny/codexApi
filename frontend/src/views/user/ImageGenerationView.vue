@@ -260,11 +260,42 @@
 
           <div class="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm dark:border-dark-700 dark:bg-dark-900/50">
             <div class="grid gap-3 lg:grid-cols-[1fr_auto]">
-              <div>
+              <div class="space-y-2">
+                <div class="flex flex-col gap-2 lg:hidden">
+                  <label
+                    v-if="apiKeyOptions.length > 0 || apiKeysLoading"
+                    class="flex min-w-0 items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm dark:border-dark-700"
+                  >
+                    <Icon name="key" size="sm" class="shrink-0 text-gray-400" />
+                    <select
+                      v-model="form.selectedApiKeyId"
+                      class="min-w-0 flex-1 bg-transparent outline-none"
+                      :disabled="apiKeysLoading"
+                    >
+                      <option :value="MANUAL_API_KEY_ID">{{ apiKeysLoading ? '正在读取我的 Key...' : '手动输入 API Key' }}</option>
+                      <option v-for="option in apiKeyOptions" :key="option.id" :value="option.id">
+                        {{ option.label }}
+                      </option>
+                    </select>
+                  </label>
+                  <label
+                    v-if="form.selectedApiKeyId === MANUAL_API_KEY_ID || apiKeyOptions.length === 0"
+                    class="flex min-w-0 items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm dark:border-dark-700"
+                  >
+                    <Icon name="key" size="sm" class="shrink-0 text-gray-400" />
+                    <input
+                      v-model="form.apiKey"
+                      type="password"
+                      autocomplete="off"
+                      class="min-w-0 flex-1 bg-transparent outline-none"
+                      placeholder="API Key（自动保存）"
+                    />
+                  </label>
+                </div>
                 <textarea
                   ref="textareaRef"
                   v-model="form.prompt"
-                  class="input min-h-[110px] resize-none border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0"
+                  class="input min-h-[88px] resize-none border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0 sm:min-h-[110px]"
                   :placeholder="composerReferences.length ? '描述你希望如何修改参考图。Enter 发送，Shift+Enter 换行。' : '写下你要画的内容，也可直接粘贴图片。Enter 发送，Shift+Enter 换行。'"
                   @keydown.enter.exact.prevent="submitTurn"
                   @paste="handleComposerPaste"
@@ -273,7 +304,7 @@
 
               <div class="flex flex-row flex-wrap items-start gap-2 lg:w-[330px] lg:flex-col">
                 <div class="flex w-full flex-wrap gap-2">
-                  <div class="flex min-w-0 flex-1 flex-col gap-2 lg:flex-none">
+                  <div class="hidden min-w-0 flex-col gap-2 lg:flex lg:flex-none">
                     <label
                       v-if="apiKeyOptions.length > 0 || apiKeysLoading"
                       class="flex min-w-0 items-center gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm dark:border-dark-700"
