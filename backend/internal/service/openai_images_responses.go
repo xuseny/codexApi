@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +28,28 @@ type openAIResponsesImageResult struct {
 	Background    string
 	Quality       string
 	Model         string
+}
+
+type openAIImagesNoOutputError struct {
+	message string
+	detail  string
+}
+
+func (e *openAIImagesNoOutputError) Error() string {
+	if e == nil || strings.TrimSpace(e.message) == "" {
+		return "upstream image generation completed without image output"
+	}
+	return e.message
+}
+
+func (e *openAIImagesNoOutputError) responseBody() []byte {
+	message := strings.TrimSpace(e.Error())
+	body := []byte(`{"error":{"message":"","type":"upstream_error"}}`)
+	body, _ = sjson.SetBytes(body, "error.message", message)
+	if detail := strings.TrimSpace(e.detail); detail != "" {
+		body, _ = sjson.SetBytes(body, "error.detail", detail)
+	}
+	return body
 }
 
 func openAIResponsesImageResultKey(itemID string, result openAIResponsesImageResult) string {
@@ -374,6 +397,174 @@ func extractOpenAIImageFromResponsesOutputItemDone(payload []byte) (openAIRespon
 	return entry, strings.TrimSpace(item.Get("id").String()), true, nil
 }
 
+func extractOpenAIImageFromImageGenerationCompleted(payload []byte) (openAIResponsesImageResult, string, bool, error) {
+	if gjson.GetBytes(payload, "type").String() != "image_generation.completed" {
+		return openAIResponsesImageResult{}, "", false, fmt.Errorf("unexpected event type")
+	}
+
+	result := strings.TrimSpace(gjson.GetBytes(payload, "b64_json").String())
+	if result == "" {
+		result = strings.TrimSpace(gjson.GetBytes(payload, "result").String())
+	}
+	if result == "" {
+		return openAIResponsesImageResult{}, "", false, nil
+	}
+
+	entry := openAIResponsesImageResult{
+		Result:        result,
+		RevisedPrompt: strings.TrimSpace(gjson.GetBytes(payload, "revised_prompt").String()),
+		OutputFormat:  strings.TrimSpace(gjson.GetBytes(payload, "output_format").String()),
+		Size:          strings.TrimSpace(gjson.GetBytes(payload, "size").String()),
+		Background:    strings.TrimSpace(gjson.GetBytes(payload, "background").String()),
+		Quality:       strings.TrimSpace(gjson.GetBytes(payload, "quality").String()),
+		Model:         strings.TrimSpace(gjson.GetBytes(payload, "model").String()),
+	}
+	return entry, strings.TrimSpace(gjson.GetBytes(payload, "id").String()), true, nil
+}
+
+func newOpenAIImagesNoOutputError(body []byte) *openAIImagesNoOutputError {
+	message, detail := summarizeOpenAIImagesNoOutput(body)
+	return &openAIImagesNoOutputError{
+		message: message,
+		detail:  detail,
+	}
+}
+
+func summarizeOpenAIImagesNoOutput(body []byte) (string, string) {
+	eventTypes := make([]string, 0, 8)
+	seenEventTypes := make(map[string]struct{})
+	terminalEvent := ""
+	responseStatus := ""
+	reason := ""
+	upstreamMessage := ""
+
+	forEachOpenAISSEDataPayload(string(body), func(payload []byte) {
+		trimmed := strings.TrimSpace(string(payload))
+		if trimmed == "" || trimmed == "[DONE]" || !gjson.ValidBytes(payload) {
+			return
+		}
+
+		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+		if eventType != "" {
+			if _, exists := seenEventTypes[eventType]; !exists && len(eventTypes) < 16 {
+				seenEventTypes[eventType] = struct{}{}
+				eventTypes = append(eventTypes, eventType)
+			}
+		}
+		switch eventType {
+		case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+			terminalEvent = eventType
+		}
+
+		if responseStatus == "" {
+			responseStatus = strings.TrimSpace(gjson.GetBytes(payload, "response.status").String())
+		}
+		if reason == "" {
+			for _, path := range []string{
+				"response.incomplete_details.reason",
+				"response.incomplete_details.message",
+				"response.status_details.reason",
+				"response.status_details.error.message",
+				"response.error.message",
+				"error.message",
+				"message",
+			} {
+				if value := strings.TrimSpace(gjson.GetBytes(payload, path).String()); value != "" {
+					reason = value
+					break
+				}
+			}
+		}
+		if upstreamMessage == "" {
+			upstreamMessage = extractOpenAISSEErrorMessage(payload)
+		}
+		if upstreamMessage == "" {
+			upstreamMessage = extractOpenAIImagesRefusalMessage(payload)
+		}
+	})
+
+	baseMessage := "Upstream image generation completed without image output"
+	extracted := strings.TrimSpace(upstreamMessage)
+	if extracted == "" {
+		extracted = strings.TrimSpace(reason)
+	}
+	if extracted != "" {
+		extracted = sanitizeUpstreamErrorMessage(extracted)
+		if openAIImagesLooksLikePolicyRejection(extracted) {
+			baseMessage = "Upstream image generation was rejected: " + extracted
+		} else {
+			baseMessage = "Upstream image generation did not return image output: " + extracted
+		}
+	}
+
+	detailParts := make([]string, 0, 4)
+	if len(eventTypes) > 0 {
+		detailParts = append(detailParts, "events="+strings.Join(eventTypes, ","))
+	}
+	if terminalEvent != "" {
+		detailParts = append(detailParts, "terminal="+terminalEvent)
+	}
+	if responseStatus != "" {
+		detailParts = append(detailParts, "status="+responseStatus)
+	}
+	if reason != "" {
+		detailParts = append(detailParts, "reason="+sanitizeUpstreamErrorMessage(reason))
+	}
+	detail := truncateString(strings.Join(detailParts, "; "), 1024)
+	return baseMessage, detail
+}
+
+func extractOpenAIImagesRefusalMessage(payload []byte) string {
+	responseOutput := gjson.GetBytes(payload, "response.output")
+	if !responseOutput.IsArray() {
+		return ""
+	}
+	for _, item := range responseOutput.Array() {
+		content := item.Get("content")
+		if !content.IsArray() {
+			continue
+		}
+		for _, part := range content.Array() {
+			if msg := strings.TrimSpace(part.Get("refusal").String()); msg != "" {
+				return msg
+			}
+			if strings.EqualFold(strings.TrimSpace(part.Get("type").String()), "refusal") {
+				if msg := strings.TrimSpace(part.Get("text").String()); msg != "" {
+					return msg
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func openAIImagesLooksLikePolicyRejection(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"policy",
+		"safety",
+		"safety_error",
+		"safe completion",
+		"high-risk",
+		"not allowed",
+		"disallowed",
+		"refus",
+		"rejected",
+		"violat",
+		"moderation",
+		"flagged",
+		"unsafe",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func collectOpenAIImagesFromResponsesBody(body []byte) ([]openAIResponsesImageResult, int64, []byte, openAIResponsesImageResult, bool, error) {
 	var (
 		fallbackResults []openAIResponsesImageResult
@@ -411,6 +602,21 @@ func collectOpenAIImagesFromResponsesBody(body []byte) ([]openAIResponsesImageRe
 			if ok {
 				mergeOpenAIResponsesImageMeta(&result, responseMeta)
 				appendOpenAIResponsesImageResultDedup(&fallbackResults, fallbackSeen, itemID, result)
+			}
+		case "image_generation.completed":
+			result, itemID, ok, err := extractOpenAIImageFromImageGenerationCompleted(payload)
+			if err != nil {
+				collectErr = err
+				return
+			}
+			if ok {
+				mergeOpenAIResponsesImageMeta(&result, responseMeta)
+				appendOpenAIResponsesImageResultDedup(&fallbackResults, fallbackSeen, itemID, result)
+			}
+			if len(usageRaw) == 0 {
+				if usage := gjson.GetBytes(payload, "usage"); usage.Exists() && usage.IsObject() {
+					usageRaw = []byte(usage.Raw)
+				}
 			}
 		case "response.completed":
 			results, completedAt, completedUsageRaw, firstMeta, err := extractOpenAIImagesFromResponsesCompleted(payload)
@@ -578,7 +784,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	if len(results) == 0 {
-		return OpenAIUsage{}, 0, nil, fmt.Errorf("upstream did not return image output")
+		return OpenAIUsage{}, 0, nil, newOpenAIImagesNoOutputError(body)
 	}
 	if strings.TrimSpace(firstMeta.Model) == "" {
 		firstMeta.Model = strings.TrimSpace(fallbackModel)
@@ -693,6 +899,28 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 			}
 			pendingSeen[key] = struct{}{}
 			pendingResults = append(pendingResults, img)
+		case "image_generation.completed":
+			img, itemID, ok, extractErr := extractOpenAIImageFromImageGenerationCompleted(dataBytes)
+			if extractErr != nil {
+				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(extractErr.Error()))
+				processDataErr = extractErr
+				processDataDone = true
+				return
+			}
+			if !ok {
+				return
+			}
+			mergeOpenAIResponsesImageMeta(&streamMeta, img)
+			mergeOpenAIResponsesImageMeta(&img, streamMeta)
+			key := openAIResponsesImageResultKey(itemID, img)
+			if _, exists := emitted[key]; exists {
+				return
+			}
+			if _, exists := pendingSeen[key]; exists {
+				return
+			}
+			pendingSeen[key] = struct{}{}
+			pendingResults = append(pendingResults, img)
 		case "response.completed":
 			results, _, usageRaw, firstMeta, extractErr := extractOpenAIImagesFromResponsesCompleted(dataBytes)
 			if extractErr != nil {
@@ -713,7 +941,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 				appendOpenAIResponsesImageResultDedup(&finalResults, finalSeen, "", img)
 			}
 			if len(finalResults) == 0 {
-				outputErr := fmt.Errorf("upstream did not return image output")
+				outputErr := newOpenAIImagesNoOutputError(dataBytes)
 				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(outputErr.Error()))
 				processDataErr = outputErr
 				processDataDone = true
@@ -1062,11 +1290,59 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 					ImageOutputSizes: imageOutputSizes,
 				}, err
 			}
+			var noOutputErr *openAIImagesNoOutputError
+			if strings.EqualFold(parsed.Endpoint, openAIImagesEditsEndpoint) && errors.As(err, &noOutputErr) {
+				respBody := noOutputErr.responseBody()
+				retryableOnSameAccount := account.IsPoolMode() && !openAIImagesLooksLikePolicyRejection(noOutputErr.Error()+" "+noOutputErr.detail)
+				setOpsUpstreamError(c, http.StatusBadGateway, noOutputErr.Error(), noOutputErr.detail)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:             account.Platform,
+					AccountID:            account.ID,
+					AccountName:          account.Name,
+					UpstreamStatusCode:   http.StatusBadGateway,
+					UpstreamRequestID:    resp.Header.Get("x-request-id"),
+					UpstreamURL:          safeUpstreamURL(upstreamReq.URL.String()),
+					UpstreamResponseBody: string(respBody),
+					Kind:                 "no_image_output",
+					Message:              noOutputErr.Error(),
+					Detail:               noOutputErr.detail,
+				})
+				return nil, &UpstreamFailoverError{
+					StatusCode:             http.StatusBadGateway,
+					ResponseBody:           respBody,
+					ResponseHeaders:        resp.Header.Clone(),
+					RetryableOnSameAccount: retryableOnSameAccount,
+				}
+			}
 			return nil, err
 		}
 	} else {
 		usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, requestModel)
 		if err != nil {
+			var noOutputErr *openAIImagesNoOutputError
+			if strings.EqualFold(parsed.Endpoint, openAIImagesEditsEndpoint) && errors.As(err, &noOutputErr) {
+				respBody := noOutputErr.responseBody()
+				retryableOnSameAccount := account.IsPoolMode() && !openAIImagesLooksLikePolicyRejection(noOutputErr.Error()+" "+noOutputErr.detail)
+				setOpsUpstreamError(c, http.StatusBadGateway, noOutputErr.Error(), noOutputErr.detail)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:             account.Platform,
+					AccountID:            account.ID,
+					AccountName:          account.Name,
+					UpstreamStatusCode:   http.StatusBadGateway,
+					UpstreamRequestID:    resp.Header.Get("x-request-id"),
+					UpstreamURL:          safeUpstreamURL(upstreamReq.URL.String()),
+					UpstreamResponseBody: string(respBody),
+					Kind:                 "no_image_output",
+					Message:              noOutputErr.Error(),
+					Detail:               noOutputErr.detail,
+				})
+				return nil, &UpstreamFailoverError{
+					StatusCode:             http.StatusBadGateway,
+					ResponseBody:           respBody,
+					ResponseHeaders:        resp.Header.Clone(),
+					RetryableOnSameAccount: retryableOnSameAccount,
+				}
+			}
 			return nil, err
 		}
 	}
