@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -633,6 +634,59 @@ func (s *GroupRepoSuite) TestGetAccountCount() {
 	count, _, err := s.repo.GetAccountCount(s.ctx, group.ID)
 	s.Require().NoError(err, "GetAccountCount")
 	s.Require().Equal(int64(2), count)
+}
+
+func (s *GroupRepoSuite) TestAccountCountsMatchAccountManagementStatusFilters() {
+	group := &service.Group{
+		Name:             "g-count-normal-filter",
+		Platform:         service.PlatformAnthropic,
+		RateMultiplier:   1.0,
+		IsExclusive:      false,
+		Status:           service.StatusActive,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, group))
+
+	insertAccount := func(name, status string, schedulable bool) int64 {
+		var accountID int64
+		s.Require().NoError(scanSingleRow(
+			s.ctx,
+			s.tx,
+			`INSERT INTO accounts (name, platform, type, status, schedulable, credentials, extra, concurrency, priority)
+			 VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, '{}'::jsonb, 3, 50)
+			 RETURNING id`,
+			[]any{name, service.PlatformAnthropic, service.AccountTypeOAuth, status, schedulable},
+			&accountID,
+		))
+		_, err := s.tx.ExecContext(s.ctx, "INSERT INTO account_groups (account_id, group_id, priority, created_at) VALUES ($1, $2, $3, NOW())", accountID, group.ID, 1)
+		s.Require().NoError(err)
+		return accountID
+	}
+
+	insertAccount("normal", service.StatusActive, true)
+	rateLimited := insertAccount("rate-limited", service.StatusActive, true)
+	tempUnschedulable := insertAccount("temp-unschedulable", service.StatusActive, true)
+	insertAccount("unschedulable", service.StatusActive, false)
+	insertAccount("disabled", service.StatusDisabled, true)
+
+	resetAt := time.Now().Add(10 * time.Minute)
+	_, err := s.tx.ExecContext(s.ctx, "UPDATE accounts SET rate_limit_reset_at = $1 WHERE id = $2", resetAt, rateLimited)
+	s.Require().NoError(err)
+	tempUntil := time.Now().Add(15 * time.Minute)
+	_, err = s.tx.ExecContext(s.ctx, "UPDATE accounts SET temp_unschedulable_until = $1 WHERE id = $2", tempUntil, tempUnschedulable)
+	s.Require().NoError(err)
+
+	total, normal, err := s.repo.GetAccountCount(s.ctx, group.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(5), total)
+	s.Require().Equal(int64(1), normal)
+
+	groups, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.PlatformAnthropic, service.StatusActive, group.Name, nil)
+	s.Require().NoError(err)
+	s.Require().Len(groups, 1)
+	s.Require().Equal(int64(5), groups[0].AccountCount)
+	s.Require().Equal(int64(1), groups[0].ActiveAccountCount)
+	s.Require().Equal(int64(1), groups[0].RateLimitedAccountCount)
 }
 
 func (s *GroupRepoSuite) TestGetAccountCount_Empty() {

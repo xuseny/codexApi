@@ -496,12 +496,15 @@ func (r *groupRepository) GetAccountCount(ctx context.Context, groupID int64) (t
 	var rateLimited int64
 	err = scanSingleRow(ctx, r.sql,
 		`SELECT COUNT(*),
-			COUNT(*) FILTER (WHERE a.status = 'active' AND a.schedulable = true),
-			COUNT(*) FILTER (WHERE a.status = 'active' AND (
-				a.rate_limit_reset_at > NOW() OR
-				a.overload_until > NOW() OR
-				a.temp_unschedulable_until > NOW()
-			))
+			COUNT(*) FILTER (WHERE a.status = 'active'
+				AND a.schedulable = true
+				AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
+				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+			),
+			COUNT(*) FILTER (WHERE a.status = 'active'
+				AND a.rate_limit_reset_at > NOW()
+				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+			)
 		FROM account_groups ag JOIN accounts a ON a.id = ag.account_id
 		WHERE ag.group_id = $1`,
 		[]any{groupID}, &total, &active, &rateLimited)
@@ -647,12 +650,15 @@ func (r *groupRepository) loadAccountCounts(ctx context.Context, groupIDs []int6
 		ctx,
 		`SELECT ag.group_id,
 			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE a.status = 'active' AND a.schedulable = true) AS active,
-			COUNT(*) FILTER (WHERE a.status = 'active' AND (
-				a.rate_limit_reset_at > NOW() OR
-				a.overload_until > NOW() OR
-				a.temp_unschedulable_until > NOW()
-			)) AS rate_limited
+			COUNT(*) FILTER (WHERE a.status = 'active'
+				AND a.schedulable = true
+				AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
+				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+			) AS active,
+			COUNT(*) FILTER (WHERE a.status = 'active'
+				AND a.rate_limit_reset_at > NOW()
+				AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+			) AS rate_limited
 		FROM account_groups ag
 		JOIN accounts a ON a.id = ag.account_id
 		WHERE ag.group_id = ANY($1)
