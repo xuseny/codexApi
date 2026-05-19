@@ -154,6 +154,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/images',
+    name: 'ImageGeneration',
+    component: () => import('@/views/user/ImageGenerationView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'AI 画图',
+      titleKey: 'nav.imageGeneration',
+    }
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),
@@ -687,7 +697,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/key-exchange', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/key-exchange', '/images', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',

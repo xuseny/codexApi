@@ -49,7 +49,7 @@
           </button>
           <router-link to="/images" class="btn btn-secondary w-full sm:w-auto">
             <Icon name="sparkles" size="sm" class="mr-2" />
-            image-2模型生图
+            AI 画图
           </router-link>
         </div>
       </section>

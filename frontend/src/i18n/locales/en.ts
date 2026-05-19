@@ -348,7 +348,7 @@ export default {
     redeem: 'Redeem',
     keyExchange: 'Key Exchange',
     keyExchangeCodes: 'Exchange Codes',
-    imageGeneration: 'AI Image Generation',
+    imageGeneration: 'AI Drawing',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',
     affiliateInviteRecords: 'Invite Records',

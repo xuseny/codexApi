@@ -348,7 +348,7 @@ export default {
     redeem: '兑换',
     keyExchange: '密钥兑换',
     keyExchangeCodes: '兑换码管理',
-    imageGeneration: 'AI 图片生成',
+    imageGeneration: 'AI 画图',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',
     affiliateInviteRecords: '邀请记录',
