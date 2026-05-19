@@ -1124,6 +1124,10 @@ import { useAppStore } from '@/stores/app'
 import { useOnboardingStore } from '@/stores/onboarding'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
+import {
+  buildCcSwitchImportDeeplink,
+  type CcSwitchClientType
+} from '@/utils/ccswitchImport'
 
 const { t } = useI18n()
 
@@ -1807,33 +1811,9 @@ const importToCcswitch = (row: ApiKey) => {
   executeCcsImport(row, platform === 'gemini' ? 'gemini' : 'claude')
 }
 
-const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
+const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
   const platform = row.group?.platform || 'anthropic'
-
-  // Determine app name and endpoint based on platform and client type
-  let app: string
-  let endpoint: string
-
-  if (platform === 'antigravity') {
-    // Antigravity always uses /antigravity suffix
-    app = clientType === 'gemini' ? 'gemini' : 'claude'
-    endpoint = `${baseUrl}/antigravity`
-  } else {
-    switch (platform) {
-      case 'openai':
-        app = 'codex'
-        endpoint = baseUrl
-        break
-      case 'gemini':
-        app = 'gemini'
-        endpoint = baseUrl
-        break
-      default: // anthropic
-        app = 'claude'
-        endpoint = baseUrl
-    }
-  }
 
   const usageScript = `({
     request: {
@@ -1852,20 +1832,14 @@ const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
     }
   })`
   const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
-
-  const params = new URLSearchParams({
-    resource: 'provider',
-    app: app,
-    name: providerName,
-    homepage: baseUrl,
-    endpoint: endpoint,
+  const deeplink = buildCcSwitchImportDeeplink({
+    baseUrl,
+    platform,
+    clientType,
+    providerName,
     apiKey: row.key,
-    configFormat: 'json',
-    usageEnabled: 'true',
-    usageScript: btoa(usageScript),
-    usageAutoInterval: '30'
+    usageScript
   })
-  const deeplink = `ccswitch://v1/import?${params.toString()}`
 
   try {
     window.open(deeplink, '_self')
@@ -1882,7 +1856,7 @@ const executeCcsImport = (row: ApiKey, clientType: 'claude' | 'gemini') => {
   }
 }
 
-const handleCcsClientSelect = (clientType: 'claude' | 'gemini') => {
+const handleCcsClientSelect = (clientType: CcSwitchClientType) => {
   if (pendingCcsRow.value) {
     executeCcsImport(pendingCcsRow.value, clientType)
   }
