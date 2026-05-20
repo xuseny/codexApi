@@ -1215,6 +1215,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	upstreamReq.Header.Set("Accept", "text/event-stream")
+	if account.Type == AccountTypeOAuth && strings.TrimSpace(account.GetOpenAIUserAgent()) == "" {
+		upstreamReq.Header.Set("User-Agent", codexCLIUserAgent)
+		upstreamReq.Header.Set("originator", "codex_cli_rs")
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
