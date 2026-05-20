@@ -147,6 +147,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 
 	// 先尝试临时不可调度规则（401除外）
 	// 如果匹配成功，直接返回，不执行后续禁用逻辑
+	if statusCode == http.StatusForbidden && account.Platform == PlatformOpenAI && isOpenAITransientHTMLForbidden(responseBody) {
+		slog.Warn("openai_403_html_state_change_skipped", "account_id", account.ID)
+		return true
+	}
 	if statusCode != 401 {
 		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return true
@@ -761,6 +765,22 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"threshold", openAI403DisableThreshold,
 	)
 	return true
+}
+
+// isOpenAITransientHTMLForbidden recognizes transient OpenAI edge HTML 403 pages.
+func isOpenAITransientHTMLForbidden(responseBody []byte) bool {
+	body := bytes.TrimSpace(responseBody)
+	if len(body) == 0 || json.Valid(body) {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	if !strings.HasPrefix(lower, "<!doctype html") && !strings.HasPrefix(lower, "<html") {
+		return false
+	}
+	return strings.Contains(lower, "<meta name=\"viewport\"") ||
+		strings.Contains(lower, "font-family:arial") ||
+		strings.Contains(lower, "scale-appear") ||
+		strings.Contains(lower, "align-items:center;display:flex")
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
