@@ -372,7 +372,14 @@
                   </select>
 
                   <select v-model="form.model" class="input w-auto min-w-[150px]">
-                    <option v-for="model in modelOptions" :key="model" :value="model">{{ model }}</option>
+                    <option
+                      v-for="model in modelOptions"
+                      :key="model"
+                      :value="model"
+                      :disabled="form.background === 'transparent' && !supportsTransparentBackground(model)"
+                    >
+                      {{ model }}
+                    </option>
                   </select>
 
                   <select v-model="form.background" class="input w-auto min-w-[116px]" title="背景">
@@ -575,7 +582,9 @@ const DB_STORE = 'image_state'
 const DB_STATE_KEY = 'state'
 const MANUAL_API_KEY_ID = 'manual'
 const DEFAULT_MODEL: ImageModel = 'gpt-image-2'
+const DEFAULT_TRANSPARENT_MODEL: ImageModel = 'gpt-image-1.5'
 const modelOptions: ImageModel[] = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']
+const transparentBackgroundModels: ImageModel[] = ['gpt-image-1.5', 'gpt-image-1']
 const backgroundOptions: Array<{ value: ImageBackgroundMode, label: string }> = [
   { value: 'auto', label: '自动背景' },
   { value: 'transparent', label: '透明背景' }
@@ -738,6 +747,10 @@ function isImageBackgroundMode(value: unknown): value is ImageBackgroundMode {
 
 function isImageOutputFormatMode(value: unknown): value is ImageOutputFormatMode {
   return value === 'png' || value === 'webp' || value === 'jpeg'
+}
+
+function supportsTransparentBackground(model: ImageModel): boolean {
+  return transparentBackgroundModels.includes(model)
 }
 
 function isImageSizeValue(value: unknown): value is ImageSize {
@@ -1944,10 +1957,25 @@ watch(
 )
 
 watch(
-  () => [form.prompt, form.apiKey, form.selectedApiKeyId, form.count, form.size, form.aspectRatio, form.resolutionTier, form.model],
+  () => [form.prompt, form.apiKey, form.selectedApiKeyId, form.count, form.size, form.aspectRatio, form.resolutionTier, form.model, form.background, form.outputFormat],
   () => {
     void persistState()
   }
+)
+
+watch(
+  () => [form.background, form.model, form.outputFormat] as const,
+  () => {
+    if (form.background === 'transparent') {
+      if (!supportsTransparentBackground(form.model)) {
+        form.model = DEFAULT_TRANSPARENT_MODEL
+      }
+      if (form.outputFormat === 'jpeg') {
+        form.outputFormat = 'png'
+      }
+    }
+  },
+  { immediate: true }
 )
 
 watch(
