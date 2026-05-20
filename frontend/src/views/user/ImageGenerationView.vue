@@ -115,6 +115,8 @@
               <span class="badge badge-gray">模型 {{ form.model }}</span>
               <span class="badge badge-gray">{{ selectedAspectLabel }}</span>
               <span class="badge badge-gray">{{ selectedResolutionLabel }}</span>
+              <span class="badge badge-gray">{{ selectedBackgroundLabel }}</span>
+              <span class="badge badge-gray">{{ selectedOutputFormatLabel }}</span>
               <span class="badge badge-gray">张数 {{ form.count }}</span>
             </div>
           </div>
@@ -143,6 +145,8 @@
                 <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-dark-400">
                   <span class="badge badge-gray">{{ turn.mode === 'edit' ? '编辑' : '生成' }}</span>
                   <span class="badge badge-gray">{{ imageSizeLabel(turn.size) }}</span>
+                  <span class="badge badge-gray">{{ imageBackgroundLabel(turn.background) }}</span>
+                  <span class="badge badge-gray">{{ imageOutputFormatLabel(turn.outputFormat) }}</span>
                   <span class="badge badge-gray">{{ turn.count }} 张</span>
                   <span :class="turnStatusClass(turn.status)" class="badge">{{ turnStatusLabel(turn.status) }}</span>
                 </div>
@@ -370,6 +374,18 @@
                   <select v-model="form.model" class="input w-auto min-w-[150px]">
                     <option v-for="model in modelOptions" :key="model" :value="model">{{ model }}</option>
                   </select>
+
+                  <select v-model="form.background" class="input w-auto min-w-[116px]" title="背景">
+                    <option v-for="option in backgroundOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
+
+                  <select v-model="form.outputFormat" class="input w-auto min-w-[96px]" title="输出格式">
+                    <option v-for="option in availableOutputFormatOptions" :key="option.value" :value="option.value">
+                      {{ option.label }}
+                    </option>
+                  </select>
                 </div>
 
                 <div class="flex w-full items-center justify-between gap-3">
@@ -449,7 +465,15 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
-import { imagesAPI, type GeneratedImage, type ImageModel, type ImageQuality, type ImageSize } from '@/api/images'
+import {
+  imagesAPI,
+  type GeneratedImage,
+  type ImageBackgroundOption,
+  type ImageModel,
+  type ImageOutputFormat,
+  type ImageQuality,
+  type ImageSize
+} from '@/api/images'
 import { keysAPI } from '@/api/keys'
 import type { ApiKey } from '@/types'
 import { maskApiKey } from '@/utils/maskApiKey'
@@ -458,6 +482,8 @@ type ConversationMode = 'generate' | 'edit'
 type TurnStatus = 'queued' | 'generating' | 'success' | 'error'
 type AspectRatioValue = 'auto' | '1:1' | '16:9' | '4:3' | '3:4' | '9:16'
 type ResolutionTier = '1K' | '2K' | '4K'
+type ImageBackgroundMode = ImageBackgroundOption
+type ImageOutputFormatMode = ImageOutputFormat
 
 interface StoredReferenceImage {
   name: string
@@ -471,6 +497,7 @@ interface StoredImage {
   b64_json?: string
   url?: string
   revised_prompt?: string
+  output_format?: string
   error?: string
 }
 
@@ -482,6 +509,8 @@ interface ImageTurn {
   referenceImages: StoredReferenceImage[]
   count: number
   size: ImageSize
+  background: ImageBackgroundMode
+  outputFormat: ImageOutputFormatMode
   images: StoredImage[]
   createdAt: string
   status: TurnStatus
@@ -507,6 +536,8 @@ interface ComposerForm {
   aspectRatio: AspectRatioValue
   resolutionTier: ResolutionTier
   model: ImageModel
+  background: ImageBackgroundMode
+  outputFormat: ImageOutputFormatMode
 }
 
 interface PersistState {
@@ -545,6 +576,15 @@ const DB_STATE_KEY = 'state'
 const MANUAL_API_KEY_ID = 'manual'
 const DEFAULT_MODEL: ImageModel = 'gpt-image-2'
 const modelOptions: ImageModel[] = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']
+const backgroundOptions: Array<{ value: ImageBackgroundMode, label: string }> = [
+  { value: 'auto', label: '自动背景' },
+  { value: 'transparent', label: '透明背景' }
+]
+const outputFormatOptions: Array<{ value: ImageOutputFormatMode, label: string }> = [
+  { value: 'png', label: 'PNG' },
+  { value: 'webp', label: 'WebP' },
+  { value: 'jpeg', label: 'JPEG' }
+]
 const aspectRatioOptions: Array<{ value: AspectRatioValue, label: string }> = [
   { value: 'auto', label: '未指定' },
   { value: '1:1', label: '1:1（正方形）' },
@@ -660,7 +700,9 @@ const form = reactive<ComposerForm>({
   size: '1024x1024',
   aspectRatio: '1:1',
   resolutionTier: '1K',
-  model: DEFAULT_MODEL
+  model: DEFAULT_MODEL,
+  background: 'auto',
+  outputFormat: 'png'
 })
 
 function createId(): string {
@@ -688,6 +730,14 @@ function isAspectRatioValue(value: unknown): value is AspectRatioValue {
 
 function isResolutionTier(value: unknown): value is ResolutionTier {
   return value === '1K' || value === '2K' || value === '4K'
+}
+
+function isImageBackgroundMode(value: unknown): value is ImageBackgroundMode {
+  return value === 'auto' || value === 'transparent'
+}
+
+function isImageOutputFormatMode(value: unknown): value is ImageOutputFormatMode {
+  return value === 'png' || value === 'webp' || value === 'jpeg'
 }
 
 function isImageSizeValue(value: unknown): value is ImageSize {
@@ -741,6 +791,26 @@ function imageSizeLabel(size: ImageSize): string {
   return aspect ? `${aspect} · ${size}` : size
 }
 
+function imageBackgroundLabel(background: ImageBackgroundMode): string {
+  return backgroundOptions.find((option) => option.value === background)?.label || '自动背景'
+}
+
+function imageOutputFormatLabel(outputFormat: ImageOutputFormatMode): string {
+  return outputFormatOptions.find((option) => option.value === outputFormat)?.label || 'PNG'
+}
+
+function imageOutputMimeType(outputFormat?: string): string {
+  switch ((outputFormat || '').toLowerCase()) {
+    case 'webp':
+      return 'image/webp'
+    case 'jpeg':
+    case 'jpg':
+      return 'image/jpeg'
+    default:
+      return 'image/png'
+  }
+}
+
 function normalizeError(error: unknown): string {
   if (error && typeof error === 'object') {
     const maybeAxios = error as { response?: { data?: unknown }, message?: string }
@@ -784,7 +854,7 @@ function buildConversationTitle(prompt: string): string {
 
 function toImageSrc(image: StoredImage): string {
   if (image.b64_json) {
-    return `data:image/png;base64,${image.b64_json}`
+    return `data:${imageOutputMimeType(image.output_format)};base64,${image.b64_json}`
   }
   return image.url || ''
 }
@@ -795,7 +865,8 @@ function fromGeneratedImage(image: GeneratedImage, index: number): StoredImage {
     status: 'success',
     b64_json: image.b64_json,
     url: image.url,
-    revised_prompt: image.revised_prompt
+    revised_prompt: image.revised_prompt,
+    output_format: image.output_format
   }
 }
 
@@ -854,6 +925,8 @@ function normalizeTurn(turn: ImageTurn): ImageTurn {
     referenceImages: Array.isArray(turn.referenceImages) ? turn.referenceImages.map(normalizeReferenceImage).filter((image) => !!image.dataUrl) : [],
     count: Math.max(1, Number(turn.count || images.length || 1)),
     size: normalizedSize,
+    background: isImageBackgroundMode(turn.background) ? turn.background : 'auto',
+    outputFormat: isImageOutputFormatMode(turn.outputFormat) ? turn.outputFormat : 'png',
     images,
     createdAt: String(turn.createdAt || nowIso()),
     status: turn.status === 'queued' || turn.status === 'generating' || turn.status === 'success' || turn.status === 'error' ? turn.status : 'success',
@@ -899,7 +972,14 @@ const selectedApiKeyOption = computed(() => apiKeyOptions.value.find((option) =>
 const effectiveApiKey = computed(() => selectedApiKeyOption.value?.key || form.apiKey.trim())
 const selectedAspectLabel = computed(() => aspectRatioOptions.find((option) => option.value === form.aspectRatio)?.label || '未指定')
 const selectedResolutionLabel = computed(() => form.resolutionTier)
+const selectedBackgroundLabel = computed(() => backgroundOptions.find((option) => option.value === form.background)?.label || '自动背景')
+const selectedOutputFormatLabel = computed(() => outputFormatOptions.find((option) => option.value === form.outputFormat)?.label || 'PNG')
 const availableResolutionOptions = computed(() => (form.model === 'gpt-image-2' ? baseResolutionOptions : legacyResolutionOptions))
+const availableOutputFormatOptions = computed(() => (
+  form.background === 'transparent'
+    ? outputFormatOptions.filter((option) => option.value !== 'jpeg')
+    : outputFormatOptions
+))
 const resolvedImageSize = computed(() => resolveImageSize(form.model, form.aspectRatio, form.resolutionTier))
 const pendingCount = computed(() =>
   conversations.value.reduce(
@@ -1006,7 +1086,9 @@ async function persistState(): Promise<void> {
     size: form.size,
     aspectRatio: form.aspectRatio,
     resolutionTier: form.resolutionTier,
-    model: form.model
+    model: form.model,
+    background: form.background,
+    outputFormat: form.outputFormat
   }))
 }
 
@@ -1116,6 +1198,8 @@ async function loadPersistedState(): Promise<void> {
         form.aspectRatio = isAspectRatioValue(parsed.composerForm.aspectRatio) ? parsed.composerForm.aspectRatio : inferAspectRatioFromSize(form.size)
         form.resolutionTier = isResolutionTier(parsed.composerForm.resolutionTier) ? parsed.composerForm.resolutionTier : inferResolutionTierFromSize(form.size)
         form.model = parsed.composerForm.model || DEFAULT_MODEL
+        form.background = isImageBackgroundMode(parsed.composerForm.background) ? parsed.composerForm.background : 'auto'
+        form.outputFormat = isImageOutputFormatMode(parsed.composerForm.outputFormat) ? parsed.composerForm.outputFormat : 'png'
       }
     } else {
       selectedConversationId.value = window.localStorage.getItem(ACTIVE_KEY)
@@ -1130,6 +1214,8 @@ async function loadPersistedState(): Promise<void> {
         form.aspectRatio = isAspectRatioValue(draft.aspectRatio) ? draft.aspectRatio : inferAspectRatioFromSize(form.size)
         form.resolutionTier = isResolutionTier(draft.resolutionTier) ? draft.resolutionTier : inferResolutionTierFromSize(form.size)
         form.model = (draft.model as ImageModel) || DEFAULT_MODEL
+        form.background = isImageBackgroundMode(draft.background) ? draft.background : 'auto'
+        form.outputFormat = isImageOutputFormatMode(draft.outputFormat) ? draft.outputFormat : 'png'
       }
     }
 
@@ -1224,6 +1310,8 @@ async function submitTurn(): Promise<void> {
     referenceImages: composerReferences.value.map((item) => ({ ...item })),
     count,
     size,
+    background: form.background,
+    outputFormat: form.outputFormat,
     images: makeLoadingImages(count),
     createdAt: now,
     status: 'queued'
@@ -1279,6 +1367,8 @@ async function runTurn(conversationId: string, turnId: string): Promise<void> {
             size: turn.size,
             quality: 'high' as ImageQuality,
             count: turn.count,
+            background: turn.background,
+            outputFormat: turn.background === 'transparent' && turn.outputFormat === 'jpeg' ? 'png' : turn.outputFormat,
             images: referenceFiles
           }
         : {
@@ -1287,7 +1377,9 @@ async function runTurn(conversationId: string, turnId: string): Promise<void> {
             prompt: turn.prompt,
             size: turn.size,
             quality: 'high' as ImageQuality,
-            count: turn.count
+            count: turn.count,
+            background: turn.background,
+            outputFormat: turn.background === 'transparent' && turn.outputFormat === 'jpeg' ? 'png' : turn.outputFormat
           }
 
     const result = await callImageApi(payload)
@@ -1356,6 +1448,8 @@ async function callImageApi(payload: {
   size: ImageSize
   quality: ImageQuality
   count: number
+  background: ImageBackgroundMode
+  outputFormat: ImageOutputFormatMode
   images?: File[]
 }): Promise<{ data?: GeneratedImage[] }> {
   const apiKey = payload.apiKey.trim()
@@ -1370,6 +1464,8 @@ async function callImageApi(payload: {
     formData.append('size', payload.size)
     formData.append('quality', payload.quality)
     formData.append('n', String(payload.count))
+    formData.append('background', payload.background)
+    formData.append('output_format', payload.outputFormat)
     payload.images.forEach((file, index) => {
       formData.append(index === 0 ? 'image' : `image[${index}]`, file, file.name)
     })
@@ -1392,7 +1488,9 @@ async function callImageApi(payload: {
     prompt: payload.prompt,
     size: payload.size,
     quality: payload.quality,
-    n: payload.count
+    n: payload.count,
+    background: payload.background,
+    outputFormat: payload.outputFormat
   })
   return response
 }

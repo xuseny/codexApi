@@ -7,6 +7,8 @@ const imageGatewayClient = axios.create({
 export type ImageModel = 'gpt-image-2' | 'gpt-image-1.5' | 'gpt-image-1'
 export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 export type ImageSize = string
+export type ImageBackgroundOption = 'auto' | 'transparent'
+export type ImageOutputFormat = 'png' | 'webp' | 'jpeg'
 
 export interface GenerateImageRequest {
   apiKey: string
@@ -15,12 +17,15 @@ export interface GenerateImageRequest {
   size: ImageSize
   quality: ImageQuality
   n?: number
+  background?: ImageBackgroundOption
+  outputFormat?: ImageOutputFormat
 }
 
 export interface GeneratedImage {
   b64_json?: string
   url?: string
   revised_prompt?: string
+  output_format?: string
 }
 
 interface ImagesGenerationResponse {
