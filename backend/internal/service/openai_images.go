@@ -458,6 +458,32 @@ func isOpenAIImageGenerationModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
+func openAIImageModelSupportsTransparentBackground(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveOpenAIImagesMappedModel(parsed *OpenAIImagesRequest, channelMappedModel string) string {
+	if parsed == nil {
+		return strings.TrimSpace(channelMappedModel)
+	}
+	requestModel := strings.TrimSpace(parsed.Model)
+	mappedModel := strings.TrimSpace(channelMappedModel)
+	if strings.EqualFold(strings.TrimSpace(parsed.Background), "transparent") && requestModel != "" {
+		if mappedModel == "" || !openAIImageModelSupportsTransparentBackground(mappedModel) {
+			return requestModel
+		}
+	}
+	if mappedModel != "" {
+		return mappedModel
+	}
+	return requestModel
+}
+
 func validateOpenAIImagesModel(model string) error {
 	model = strings.TrimSpace(model)
 	if isOpenAIImageGenerationModel(model) {
@@ -565,10 +591,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	channelMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
-	requestModel := strings.TrimSpace(parsed.Model)
-	if mapped := strings.TrimSpace(channelMappedModel); mapped != "" {
-		requestModel = mapped
-	}
+	requestModel := resolveOpenAIImagesMappedModel(parsed, channelMappedModel)
 	if err := validateOpenAIImagesModel(requestModel); err != nil {
 		return nil, err
 	}
