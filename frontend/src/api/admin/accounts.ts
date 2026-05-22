@@ -606,6 +606,42 @@ export interface BatchOperationResult {
   warnings?: Array<{ account_id: number; warning: string }>
 }
 
+export interface BatchHealthCheckItem {
+  account_id: number
+  success: boolean
+  status: 'success' | 'failed' | 'unauthorized'
+  latency_ms?: number
+  error?: string
+  marked_error?: boolean
+}
+
+export interface BatchHealthCheckResult {
+  total: number
+  success: number
+  failed: number
+  unauthorized: number
+  marked_error: number
+  success_ids?: number[]
+  failed_ids?: number[]
+  results: BatchHealthCheckItem[]
+}
+
+/**
+ * Batch check account connectivity and mark 401 failures as error accounts.
+ * @param accountIds - Array of account IDs
+ * @param modelId - Model ID used for the connectivity probe
+ * @returns Batch health check result
+ */
+export async function batchHealthCheck(accountIds: number[], modelId: string): Promise<BatchHealthCheckResult> {
+  const { data } = await apiClient.post<BatchHealthCheckResult>('/admin/accounts/batch-health-check', {
+    account_ids: accountIds,
+    model_id: modelId
+  }, {
+    timeout: 180000
+  })
+  return data
+}
+
 /**
  * Batch clear account errors
  * @param accountIds - Array of account IDs
@@ -677,6 +713,7 @@ export const accountsAPI = {
   importData,
   importCodexSession,
   getAntigravityDefaultModelMapping,
+  batchHealthCheck,
   batchClearError,
   batchRefresh,
   setPrivacy

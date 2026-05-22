@@ -703,6 +703,20 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchHealthCheckRequest struct {
+	AccountIDs []int64 `json:"account_ids"`
+	ModelID    string  `json:"model_id"`
+}
+
+type BatchHealthCheckItem struct {
+	AccountID   int64  `json:"account_id"`
+	Success     bool   `json:"success"`
+	Status      string `json:"status"`
+	LatencyMs   int64  `json:"latency_ms,omitempty"`
+	Error       string `json:"error,omitempty"`
+	MarkedError bool   `json:"marked_error,omitempty"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -741,6 +755,148 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// BatchHealthCheck handles batch account connectivity checks.
+// POST /api/v1/admin/accounts/batch-health-check
+func (h *AccountHandler) BatchHealthCheck(c *gin.Context) {
+	var req BatchHealthCheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if len(req.AccountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	modelID := strings.TrimSpace(req.ModelID)
+	ctx := c.Request.Context()
+
+	const maxConcurrency = 5
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
+	var mu sync.Mutex
+	results := make([]BatchHealthCheckItem, 0, len(req.AccountIDs))
+	var successCount, failedCount, unauthorizedCount, markedErrorCount int
+
+	for _, id := range req.AccountIDs {
+		accountID := id
+		g.Go(func() error {
+			item := h.runAccountHealthCheck(gctx, accountID, modelID)
+
+			mu.Lock()
+			results = append(results, item)
+			if item.Success {
+				successCount++
+			} else {
+				failedCount++
+			}
+			if item.Status == "unauthorized" {
+				unauthorizedCount++
+			}
+			if item.MarkedError {
+				markedErrorCount++
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"total":        len(req.AccountIDs),
+		"success":      successCount,
+		"failed":       failedCount,
+		"unauthorized": unauthorizedCount,
+		"marked_error": markedErrorCount,
+		"results":      results,
+		"success_ids":  collectBatchHealthCheckIDs(results, true),
+		"failed_ids":   collectBatchHealthCheckIDs(results, false),
+	})
+}
+
+func (h *AccountHandler) runAccountHealthCheck(ctx context.Context, accountID int64, modelID string) BatchHealthCheckItem {
+	result, err := h.accountTestService.RunTestBackground(ctx, accountID, modelID)
+	item := BatchHealthCheckItem{
+		AccountID: accountID,
+		Status:    "failed",
+	}
+	if result != nil {
+		item.LatencyMs = result.LatencyMs
+	}
+
+	errorMsg := ""
+	if result != nil {
+		errorMsg = strings.TrimSpace(result.ErrorMessage)
+	}
+	if err != nil && errorMsg == "" {
+		errorMsg = strings.TrimSpace(err.Error())
+	}
+
+	if err == nil && result != nil && result.Status == "success" {
+		item.Success = true
+		item.Status = "success"
+		if h.rateLimitService != nil {
+			if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(ctx, accountID); recoverErr != nil {
+				item.Error = recoverErr.Error()
+			}
+		}
+		return item
+	}
+
+	item.Error = errorMsg
+	if isUnauthorizedAccountHealthCheckError(errorMsg) {
+		item.Status = "unauthorized"
+		if h.adminService != nil {
+			markMsg := "Health check authentication failed (401)"
+			if errorMsg != "" {
+				markMsg = markMsg + ": " + truncateAccountHealthCheckError(errorMsg)
+			}
+			if markErr := h.adminService.SetAccountError(ctx, accountID, markMsg); markErr != nil {
+				item.Error = strings.TrimSpace(errorMsg + "; failed to mark account error: " + markErr.Error())
+				return item
+			}
+			item.MarkedError = true
+		}
+	}
+
+	return item
+}
+
+func isUnauthorizedAccountHealthCheckError(errorMsg string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(errorMsg))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "401") || strings.Contains(normalized, "unauthorized")
+}
+
+func truncateAccountHealthCheckError(errorMsg string) string {
+	const maxLen = 4000
+	if len(errorMsg) <= maxLen {
+		return errorMsg
+	}
+	return errorMsg[:maxLen]
+}
+
+func collectBatchHealthCheckIDs(results []BatchHealthCheckItem, success bool) []int64 {
+	ids := make([]int64, 0)
+	for _, result := range results {
+		if result.Success == success {
+			ids = append(ids, result.AccountID)
+		}
+	}
+	return ids
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.
