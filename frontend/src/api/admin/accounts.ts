@@ -626,6 +626,19 @@ export interface BatchHealthCheckResult {
   results: BatchHealthCheckItem[]
 }
 
+const BATCH_HEALTH_CHECK_CONCURRENCY = 5
+const BATCH_HEALTH_CHECK_MIN_TIMEOUT_MS = 180000
+const BATCH_HEALTH_CHECK_PER_WAVE_TIMEOUT_MS = 120000
+const BATCH_HEALTH_CHECK_MAX_TIMEOUT_MS = 3600000
+
+function getBatchHealthCheckTimeout(accountCount: number): number {
+  const waves = Math.max(1, Math.ceil(accountCount / BATCH_HEALTH_CHECK_CONCURRENCY))
+  return Math.min(
+    BATCH_HEALTH_CHECK_MAX_TIMEOUT_MS,
+    Math.max(BATCH_HEALTH_CHECK_MIN_TIMEOUT_MS, waves * BATCH_HEALTH_CHECK_PER_WAVE_TIMEOUT_MS)
+  )
+}
+
 /**
  * Batch check account connectivity and mark 401 failures as error accounts.
  * @param accountIds - Array of account IDs
@@ -637,7 +650,7 @@ export async function batchHealthCheck(accountIds: number[], modelId: string): P
     account_ids: accountIds,
     model_id: modelId
   }, {
-    timeout: 180000
+    timeout: getBatchHealthCheckTimeout(accountIds.length)
   })
   return data
 }
